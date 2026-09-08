@@ -1,0 +1,75 @@
+[
+ {
+  "at": "2026-07-31T07:55:39Z",
+  "source": "wayback-20260731075539",
+  "official_signal": null,
+  "note": "signal_tier/alert_event_id/latest_alert/signal_score 字段不存在"
+ },
+ {
+  "at": "2026-07-31T18:21:50Z",
+  "source": "wayback-20260731182150",
+  "official_signal": null,
+  "note": "同上，alert 结构整体缺席"
+ },
+ {
+  "at": "2026-08-31T02:56:48Z",
+  "source": "wayback-20260831025648",
+  "official_signal": {
+   "tweet_id": "2094252447271366730",
+   "signal_type": "dated_commitment",
+   "signal_tier": "likely",
+   "score_value": 93,
+   "delivery_destination": "alerts",
+   "alert_event_id": "signal:2094252447271366730:likely",
+   "window": {
+    "label": "end of Monday",
+    "target_kind": "deadline",
+    "target_at": "2026-09-01T06:59:59.999Z"
+   }
+  },
+  "note": "25M 落地后 22 分钟：official_signal 锚定落地推文；latest_alert 字段尚不存在"
+ },
+ {
+  "at": "2026-09-03T20:24:13Z",
+  "source": "probe2_forecast.json",
+  "official_signal": null,
+  "latest_alert": {
+   "id": "2094252447271366730",
+   "kind": "reset",
+   "state": "confirmed",
+   "corrected": true
+  },
+  "note": "window 过期后 official_signal 清空；latest_alert 已出现且 corrected=true"
+ },
+ {
+  "at": "2026-09-05T01:09:26Z",
+  "source": "forecast_0905.json",
+  "official_signal": null,
+  "latest_alert": {
+   "id": "2096035748130795560",
+   "kind": "reset",
+   "state": "confirmed",
+   "corrected": false
+  },
+  "note": "已知内部误报：reply 推文被标 reset/confirmed，Telegram 从未投递"
+ },
+ {
+  "at": "2026-09-07T21:03:21Z",
+  "source": "forecast_0908.json",
+  "official_signal": {
+   "tweet_id": "2097043464538264003",
+   "signal_type": "promise",
+   "signal_tier": "likely",
+   "score_value": 83,
+   "delivery_destination": "alerts",
+   "alert_event_id": "signal:2097043464538264003:likely",
+   "window": null
+  },
+  "latest_alert": {
+   "id": "2097043464538264003",
+   "kind": "watch",
+   "state": "active"
+  },
+  "note": "rickroll promise 83%"
+ }
+]

@@ -769,6 +769,9 @@ class FeedSignal:
         reason: str,
         summary: str,
         raw_text: str,
+        observation_result: str | None = None,
+        source: str | None = None,
+        observed_at: str | None = None,
     ) -> None:
         self.key = key
         self.lane = lane  # "banked" | "global_declared"
@@ -779,6 +782,12 @@ class FeedSignal:
         self.reason = reason
         self.summary = summary
         self.raw_text = raw_text
+        # v0.1.9 Confirmation Lane 判别字段（仅 declared 车道携带）：
+        # observed = observation_result=="reset_observed" ∨ source==
+        # "operator-observed" ∨ observed_at 非空（纯结构化，无 NLP）。
+        self.observation_result = observation_result
+        self.source = source
+        self.observed_at = observed_at
 
 
 def signals_from_feed(payload: Any, *, baseline: bool = False) -> list[FeedSignal]:
@@ -893,6 +902,13 @@ def signals_from_feed(payload: Any, *, baseline: bool = False) -> list[FeedSigna
                         reason=reason,
                         summary=summary,
                         raw_text=raw_text,
+                        observation_result=(
+                            str(event.get("observation_result") or "").strip() or None
+                        ),
+                        source=str(event.get("source") or "").strip() or None,
+                        observed_at=(
+                            str(event.get("observed_at") or "").strip() or None
+                        ),
                     )
                 )
     return signals
@@ -928,15 +944,50 @@ def build_banked_message(signal: FeedSignal, beijing: ZoneInfo) -> str:
     return "\n".join(lines)
 
 
-def build_declared_message(signal: FeedSignal, beijing: ZoneInfo) -> str:
+def build_confirm_effective_message(observed_at: str | None) -> str:
+    """B-confirm 短确认（v0.1.9）：只报「已确认生效」生命周期事实。
+
+    时间仅使用可靠 observed_at（可解析则转北京时间）；缺失/不可解析
+    省略整行。不带原文、原帖、LLM 块——那些已在此前通知中投递过。
+    """
+    lines = ["✅ Codex 额度重置已确认生效"]
+    moment = _parse_iso(observed_at) if observed_at else None
+    if moment is not None:
+        beijing_time = _format_title(moment.astimezone(ZoneInfo("Asia/Shanghai")))
+        lines.append(f"确认时间：北京时间 {beijing_time}")
+    return "\n".join(lines)
+
+
+def build_declared_message(
+    signal: FeedSignal,
+    beijing: ZoneInfo,
+    body_text: str | None = None,
+    completeness: str | None = None,
+    ai_block: str | None = None,
+) -> str:
+    """A-primary 完整通知（v0.1.9）：L1 为用户的 primary notification 时，
+    复用 v0.1.8 的 enrichment 语义——provider 全文（原文/摘录措辞）与
+    AI 解读块；body 缺失时回退 feed 摘要行。"""
     lines = [
         f"📢 Global Reset 已宣告{_signal_header(signal, beijing)}",
         "Tibo 已公开宣告为全体付费用户重置额度；到账存在传播延迟，以账户实际额度为准。",
         f"重置原因：{signal.reason}",
     ]
-    display = _display_source(signal.raw_text or signal.summary)
-    if display:
-        lines.append(f"Tibo 原文：{display}")
+    if body_text:
+        display = _cap_text(body_text)
+        lines.append("")
+        if completeness == "full" and display == body_text:
+            lines.append("Tibo 原文：")
+        else:
+            lines.append("Tibo 原文摘录：")
+        lines.append(display)
+    else:
+        display = _display_source(signal.raw_text or signal.summary)
+        if display:
+            lines.append(f"Tibo 原文：{display}")
+    if ai_block:
+        lines.append("")
+        lines.append(ai_block)
     lines.append(f"原帖：{signal.url}")
     return "\n".join(lines)
 
@@ -1696,10 +1747,12 @@ class CodexResetWatcher(MaiBotPlugin):
             new_for = [gid for gid in active if signal.key not in seen[gid]]
             if not new_for:
                 continue
-            if signal.lane == "banked":
-                message = build_banked_message(signal, beijing)
-            else:
-                message = build_declared_message(signal, beijing)
+            if signal.lane != "banked":
+                # v0.1.9 Confirmation Lane：declared 信号按群四格决策
+                # （A-primary / B-confirm / C-silence，见 _dispatch_declared_signal）。
+                await self._dispatch_declared_signal(signal, new_for, feed, beijing)
+                continue
+            message = build_banked_message(signal, beijing)
             age_ok = signal.announced_at is not None and (
                 now - signal.announced_at <= timedelta(hours=MAX_SIGNAL_AGE_HOURS)
             )
@@ -1720,10 +1773,13 @@ class CodexResetWatcher(MaiBotPlugin):
                     seen[group_id].add(signal.key)
         for group_id in active:
             if recorded[group_id]:
+                # 锁内与当前 state 合并（v0.1.9）：declared 车道已改为
+                # 独立调度器落盘，不得用 stale seen 快照覆盖其 receipt。
                 async with self._state_lock:
                     entry = self._group_state(group_id)
                     entry["notified_keys"] = sorted(
-                        seen[group_id] | set(recorded[group_id])
+                        set(entry.get("notified_keys") or [])
+                        | seen[group_id] | set(recorded[group_id])
                     )
                     self._save_state()
 
@@ -1804,6 +1860,22 @@ class CodexResetWatcher(MaiBotPlugin):
     async def _llm_analyze(
         self, osig: dict[str, Any], content: TweetContent | None
     ) -> str | None:
+        """L4 路径包装：从 official_signal 提取元数据后进入共用分析核心。"""
+        osig = osig if isinstance(osig, dict) else {}
+        return await self._llm_analyze_content(
+            str(osig.get("tweet_id") or "").strip(),
+            str(osig.get("url") or "").strip(),
+            str(osig.get("at") or "").strip(),
+            content,
+        )
+
+    async def _llm_analyze_content(
+        self,
+        tweet_id: str,
+        url: str,
+        published_at: str,
+        content: TweetContent | None,
+    ) -> str | None:
         """LLM 解读（v0.1.8）：对完整/截断原文做翻译、摘要与信息提取。
 
         - 总预算状态机：timeout_seconds 是首次分析+可选一次修复共用的
@@ -1821,9 +1893,6 @@ class CodexResetWatcher(MaiBotPlugin):
             return None
         if content is None or not content.text.strip():
             return None
-        tweet_id = str(osig.get("tweet_id") or "").strip()
-        url = str(osig.get("url") or "").strip()
-        published_at = str(osig.get("at") or "").strip()
         completeness_note = (
             "" if content.completeness == "full" else
             "（content_completeness 不是 full：以上可能只是部分原文）"
@@ -1934,6 +2003,14 @@ class CodexResetWatcher(MaiBotPlugin):
         tweet_id = str(osig.get("tweet_id") or "").strip() or _status_id(
             osig.get("url")
         )
+        fallback_summary = str(osig.get("summary") or "").strip()
+        return await self._enrich_content(tweet_id, fallback_summary, feed)
+
+    async def _enrich_content(
+        self, tweet_id: str, fallback_summary: str, feed: Any = None
+    ) -> TweetContent | None:
+        """可复用 enrichment 核心：L4（official_signal）与 L1 A-primary
+        （declared event）共用同一 provider→feed→fallback 降级链。"""
         best: TweetContent | None = None
         if tweet_id:
             providers = (
@@ -1988,14 +2065,13 @@ class CodexResetWatcher(MaiBotPlugin):
                             len(text),
                         )
                     break
-        summary = str(osig.get("summary") or "").strip()
-        if summary:
+        if fallback_summary:
             best = _better_content(
-                best, TweetContent(summary, "forecast", "unknown")
+                best, TweetContent(fallback_summary, "forecast", "unknown")
             )
             logger.info(
                 "Tweet 全文：provider=forecast completeness=unknown len=%d（候选比较）",
-                len(summary),
+                len(fallback_summary),
             )
         if best is None:
             logger.info("Tweet 全文：所有文本源缺失，仅发送标题/置信度/预计时间/原帖")
@@ -2007,6 +2083,104 @@ class CodexResetWatcher(MaiBotPlugin):
                 len(best.text),
             )
         return best
+
+    def _group_l4_alerted(self, group_id: str, tweet_id: str) -> bool:
+        """per-group 判定：该群 upstream_alert_keys 中是否已存在对当前
+        tweet 的 L4 receipt（upstream-alert:*:{tweet_id}:*）。不读其他群。"""
+        entry = self._group_state(group_id)
+        marker = f":{tweet_id}:"
+        return any(marker in str(k) for k in (entry.get("upstream_alert_keys") or []))
+
+    async def _record_declared_key(self, group_id: str, key: str) -> None:
+        """declared 车道 receipt 落盘（send 成功 / C 抑制决策共用）。"""
+        async with self._state_lock:
+            entry = self._group_state(group_id)
+            seen = set(entry.get("notified_keys") or [])
+            entry["notified_keys"] = sorted(seen | {key})
+            self._save_state()
+
+    async def _dispatch_declared_signal(
+        self, signal: FeedSignal, new_for: list[str], feed: Any, beijing: ZoneInfo
+    ) -> None:
+        """v0.1.9 Confirmation Lane：declared 信号的 per-group 四格决策。
+
+        判定（纯结构化，无 NLP / 无跨 tweet lifecycle 推断）：
+          observed = observation_result=="reset_observed" ∨ source==
+                     "operator-observed" ∨ observed_at 非空
+          l4_already = 该群 upstream_alert_keys 中存在含当前 tweet_id 的
+                     receipt（per-group，不读其他群）
+        矩阵：
+          observed ∧ l4_already → B-confirm（短确认，零 provider/LLM）
+          observed ∧ ¬l4_already → A-primary（完整 enrichment，用户首条通知）
+          ¬observed ∧ l4_already → C-silence（确定性抑制 → 落 handled key）
+          ¬observed ∧ ¬l4_already → A-primary
+        - A-primary：同 event 多个 A 群时 Content+LLM 只执行一次并复用；
+        - B：send success → 写 key；失败不写，下一轮重试；
+        - C：确定性决策 → 立即落 handled key（与 age-guard「跳过并记录」
+          同语义、同 notified_keys 命名空间，无 STATE_VERSION 变化）；
+        - age-guard（≤48h）沿用：B/A 记录不发送；C 已记录不重复。
+        """
+        observed = (
+            signal.observation_result == "reset_observed"
+            or signal.source == "operator-observed"
+            or bool(signal.observed_at)
+        )
+        now = _utcnow()
+        age_ok = signal.announced_at is not None and (
+            now - signal.announced_at <= timedelta(hours=MAX_SIGNAL_AGE_HOURS)
+        )
+        b_groups: list[str] = []
+        a_groups: list[str] = []
+        c_groups: list[str] = []
+        for group_id in new_for:
+            l4_already = self._group_l4_alerted(group_id, signal.event_id)
+            if observed:
+                # 已观测事实：该群已收到 L4 → 短确认；未收到 → 全量首条通知
+                (b_groups if l4_already else a_groups).append(group_id)
+            else:
+                # 非 observed：该群已收到 L4 → feed 只是晚归档，抑制；
+                # 未收到 → 全量首条通知
+                (c_groups if l4_already else a_groups).append(group_id)
+        if c_groups:
+            logger.info(
+                "L1 确认事件已被 L4 覆盖（同 tweet），静默并记录：%s", signal.key
+            )
+            for group_id in c_groups:
+                await self._record_declared_key(group_id, signal.key)
+        if not age_ok:
+            logger.info(
+                "Feed 信号超过 %d 小时，跳过并记录：%s", MAX_SIGNAL_AGE_HOURS, signal.key
+            )
+            for group_id in b_groups + a_groups:
+                await self._record_declared_key(group_id, signal.key)
+            return
+        if b_groups:
+            message = build_confirm_effective_message(signal.observed_at)
+            for group_id in b_groups:
+                if await self._send_group_text(group_id, message):
+                    logger.info("Feed 通知已发送：群 %s %s", group_id, signal.key)
+                    await self._record_declared_key(group_id, signal.key)
+        if a_groups:
+            content = await self._enrich_content(
+                signal.event_id, signal.summary, feed
+            )
+            ai_block = await self._llm_analyze_content(
+                signal.event_id,
+                signal.url,
+                signal.announced_at.isoformat() if signal.announced_at else "",
+                content,
+            )
+            message = build_declared_message(
+                signal,
+                beijing,
+                content.text if content is not None else None,
+                content.completeness if content is not None else None,
+                ai_block,
+            )
+            for group_id in a_groups:
+                if await self._send_group_text(group_id, message):
+                    logger.info("Feed 通知已发送：群 %s %s", group_id, signal.key)
+                    await self._record_declared_key(group_id, signal.key)
 
     def _clear_active_plan(self) -> None:
         """终止状态清除全部群的 active plan（上游结论对所有群一致），

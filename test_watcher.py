@@ -3350,3 +3350,130 @@ def test_config_update_race_no_orphan_alert_task(tmp_path):
     assert plugin._inflight == {}
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 1 and "—— AI 解读 ——" not in bodies[0]  # 新配置 llm disabled
+
+
+# ===== v0.1.9 L1 Confirmation Lane（per-group 四格决策）=====
+# 黄金数据：confirmation_cycle_landed.json（09-08 两条真实 L1 的完整
+# event/tweet JSON）。判别字段纯结构化：observation_result / source /
+# observed_at + per-group upstream_alert_keys。
+
+def _confirmation_feed() -> dict:
+    """09-08 两条真实 L1 的 event+tweet（真实落地后归档形态）。"""
+    data = json.loads(
+        (Path(__file__).resolve().parent / "live/forensic_0908/replay/corpus/confirmation_cycle_landed.json")
+        .read_text(encoding="utf-8")
+    )
+    events = [v["event"] for v in data.values()]
+    tweets = [v["tweet"] for v in data.values() if v.get("tweet")]
+    return {"events": events, "tweets": tweets}
+
+L4_RECEIPTS = [
+    "upstream-alert:signal:2097043464538264003:likely",
+    "upstream-alert:signal:2097174560412246215:likely",
+]
+
+
+def test_golden_0908_l1_1_observed_becomes_short_confirm(tmp_path):
+    """黄金回归（09-08 L1#1）：promise tweet 被 operator 改写为 observed/
+    announced，同群已有对应 L4 receipt → 只发 B-confirm 短确认，
+    含北京时间 9月8日 09:34；零 Provider、零 LLM。"""
+    plugin = _make_plugin(tmp_path)
+    _gstate(plugin)["feed_baseline_done"] = True
+    _gstate(plugin)["notified_keys"] = list(L4_RECEIPTS)  # 同群已有 L4
+    _gstate(plugin)["upstream_alert_keys"] = list(L4_RECEIPTS)
+    calls = _wire_providers(plugin, fx=_FX_GOLDEN)
+    feed = _confirmation_feed()
+    asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING))  # noqa: SLF001
+    bodies = [b for _, b in plugin._ctx.send.sent_messages]
+    assert bodies == ["✅ Codex 额度重置已确认生效" + N1 + "确认时间：北京时间 9月8日 09:34"]
+    assert calls["fx"] == [] and calls["vx"] == []  # 零 Provider
+    assert plugin._ctx.llm.generate_calls == []  # 零 LLM
+    assert "global-declared:2097043464538264003" in _gstate(plugin)["notified_keys"]
+
+
+def test_golden_0908_l1_2_confirmation_late_archive_is_silenced(tmp_path):
+    """黄金回归（09-08 L1#2）：All reset for everyone 确认推文已被 L4+LLM
+    通知（同群 receipt 在），feed 晚一步归档 → C-silence：0 QQ、0 Provider、
+    0 LLM，并落 handled key 防重复判定。"""
+    plugin = _make_plugin(tmp_path)
+    _gstate(plugin)["feed_baseline_done"] = True
+    _gstate(plugin)["notified_keys"] = list(L4_RECEIPTS)
+    _gstate(plugin)["upstream_alert_keys"] = list(L4_RECEIPTS)
+    calls = _wire_providers(plugin, fx=_FX_GOLDEN)
+    feed = _confirmation_feed()
+    feed["events"] = [
+        e for e in feed["events"] if str(e["id"]) == "2097174560412246215"
+    ]
+    asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING))  # noqa: SLF001
+    assert plugin._ctx.send.sent_messages == []  # 0 QQ
+    assert calls["fx"] == [] and calls["vx"] == []  # 0 Provider
+    assert plugin._ctx.llm.generate_calls == []  # 0 LLM
+    assert "global-declared:2097174560412246215" in _gstate(plugin)["notified_keys"]  # handled key
+
+
+def test_mixed_groups_same_event_four_quadrant(tmp_path):
+    """混合群（spec 6）：同一 observed event 与同一 confirmation event，
+    群 A（已有 L4 receipt）→ B-confirm / C-silence；群 B（无 receipt）→
+    A-primary（Content+LLM）。一个群的 receipt 不影响另一个群。"""
+    plugin = _make_plugin(
+        tmp_path, group_id="", group_ids=["100000001", "100000002"],
+        llm_overrides={"enabled": True},
+    )
+    # 群 A 已有两条 L4 receipt；群 B 没有
+    _gstate(plugin, "100000001")["upstream_alert_keys"] = list(L4_RECEIPTS)
+    _gstate(plugin, "100000001")["feed_baseline_done"] = True
+    _gstate(plugin, "100000002")["feed_baseline_done"] = True
+    _gstate(plugin, "100000002")["notified_keys"] = []
+    good = {"translation_zh": "翻", "summary_zh": "要", "reset": {"mentioned": False}, "time_expressions": [], "key_points": [], "ambiguities": [], "context_notes": []}
+
+    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, rpc_timeout_ms=None, **kwargs):
+        return {"success": True, "response": json.dumps(good, ensure_ascii=False), "model_name": "m1", "total_tokens": 1}
+
+    plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
+    _wire_providers(plugin, fx=_FX_GOLDEN)
+    asyncio.run(plugin._process_feed_signals(_confirmation_feed(), ["100000001", "100000002"], BEIJING))  # noqa: SLF001
+    by_group: dict[str, list[str]] = {}
+    for stream, body in plugin._ctx.send.sent_messages:
+        by_group.setdefault(stream, []).append(body)
+    # 群 A：observed → B-confirm（1 条）；confirmation → C-silence（0 条）
+    assert len(by_group.get("qq-group-100000001", [])) == 1
+    assert by_group["qq-group-100000001"][0].startswith("✅ Codex 额度重置已确认生效")
+    # 群 B：两个事件都是 A-primary → 全量通知（含 enrichment 与 AI 解读）
+    assert len(by_group.get("qq-group-100000002", [])) == 2
+    assert all("Tibo 原文" in b for b in by_group["qq-group-100000002"])
+    # receipt 独立：A 两个 key（1 发送 + 1 handled）；B 两个 key（2 发送）
+    assert sorted(_gstate(plugin, "100000001")["notified_keys"]) == [
+        "global-declared:2097043464538264003",
+        "global-declared:2097174560412246215",
+    ]
+    assert sorted(_gstate(plugin, "100000002")["notified_keys"]) == [
+        "global-declared:2097043464538264003",
+        "global-declared:2097174560412246215",
+    ]
+
+
+def test_confirmation_primary_uses_provider_full_text(tmp_path):
+    """A-primary 复用 Content Provider：B 群（无 L4 receipt）的 declared
+    通知带 FxTwitter 完整原文（原文措辞）与原帖。"""
+    plugin = _make_plugin(tmp_path)
+    _gstate(plugin)["feed_baseline_done"] = True
+    _gstate(plugin)["notified_keys"] = []
+    _wire_providers(plugin, fx=_FX_GOLDEN)
+    conf = _confirmation_feed()
+    feed = {
+        "events": [conf["events"][0]],
+        "tweets": [conf["tweets"][0]],  # 显式 is_reply=False → reply 判定通过
+    }
+    asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING))  # noqa: SLF001
+    bodies = [b for _, b in plugin._ctx.send.sent_messages]
+    assert len(bodies) == 1
+    assert "📢 Global Reset 已宣告" in bodies[0]
+    assert "Tibo 原文：" in bodies[0] and "Lands around 6pm PST today" in bodies[0]
+    assert "Tibo 原文摘录" not in bodies[0]
+
+
+def test_confirmation_short_message_omits_unparseable_observed_at(tmp_path):
+    """observed_at 不可解析 → 省略时间行（只用可靠 observed_at）。"""
+    from codex_reset_watcher.plugin import build_confirm_effective_message
+    assert build_confirm_effective_message("not-a-date") == "✅ Codex 额度重置已确认生效"
+    assert build_confirm_effective_message(None) == "✅ Codex 额度重置已确认生效"
