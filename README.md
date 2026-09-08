@@ -1,12 +1,16 @@
-# Codex 额度重置提醒插件（v0.1.5 · 多群通知）
+# Codex 额度重置提醒插件（v0.1.9 · 多群通知 + L1 确认车道）
 
 长期监控 OpenAI Codex / ChatGPT Work 的**全局额度重置**与 **Banked Reset
 生命周期**，向 QQ 群（北京时间）发送通知。只消费上游结构化字段做语义判定，
-Tibo 原文仅作通知展示。宁可漏报，不猜。
+Tibo 原文仅作通知展示；上游未形成面向用户的告警时保持静默，插件不自行
+创造告警。
+
+**当前状态**：0.1.9 候选（新增 L1 Reset Confirmation Lane：declared 事件按
+per-group 四格决策分级为 短确认 / 完整首条通知 / 静默；0.1.8 的 upstream
+alert 镜像 / Tweet 全文补全 / LLM 解读保持不变）。
 
 **当前状态**：0.1.5 已部署生产（2026-09-05，maintenance：Tibo 观察日志
 中文化，config/state 零变化、零发送；0.1.3 多群通知 / 0.1.4 age-guard
-去噪均稳定，NapCat 全程未动），稳定运行等待下一次真实 Reset。
 
 ## 数据源与车道（一页速览）
 
@@ -25,9 +29,9 @@ Banked Reset 通知必须声明：存入账户供之后**手动兑换**，不代
 | 文件 | 说明 |
 |---|---|
 | `codex_reset_watcher/plugin.py` | 插件主体（唯一业务代码） |
-| `codex_reset_watcher/_manifest.json` | 插件清单（id `codex-reset.watcher`，v0.1.5） |
+| `codex_reset_watcher/_manifest.json` | 插件清单（id `codex-reset.watcher`，v0.1.9） |
 | `codex_reset_watcher/config.toml` | 默认配置样例 |
-| `test_watcher.py` | pytest（93 项，真实 fixture 优先） |
+| `test_watcher.py` | pytest（168 项，真实 fixture 优先） |
 
 ## 安装与配置
 
@@ -56,6 +60,5 @@ codex_base = "https://codex-reset.com"
 ## 验证
 
 ```bash
-/e/AI\ Bot/MaiM-with-u/MaiBot/.venv/Scripts/python.exe -m pytest test_watcher.py -q
-# 93 passed
+# 181 passed（测试全部离线）
 ```
