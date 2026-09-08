@@ -2176,7 +2176,13 @@ def test_real_0908_forecast_mirrors_once_then_dedups(tmp_path):
     _gstate(plugin)["feed_baseline_done"] = True
     _gstate(plugin)["notified_keys"] = []
     _wire_forecast(plugin, _probe("live/forensic_0908/forecast_0908.json"))
-    asyncio.run(plugin._check_once())
+
+    async def once() -> None:
+        await plugin._check_once()
+        while plugin._inflight:  # 等待后台管线完成
+            await asyncio.sleep(0.01)
+
+    asyncio.run(asyncio.wait_for(once(), 10))
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 1
     body = bodies[0]
@@ -2193,7 +2199,7 @@ def test_real_0908_forecast_mirrors_once_then_dedups(tmp_path):
         (tmp_path / "reset_state.json").read_text(encoding="utf-8")
     )["version"] == 6  # state schema 仍 v6，只是新增键
     # 第二轮同 id：静默。
-    asyncio.run(plugin._check_once())
+    asyncio.run(asyncio.wait_for(once(), 10))
     assert len(plugin._ctx.send.sent_messages) == 1
 
 
@@ -2237,14 +2243,23 @@ def test_upstream_alert_multi_group_failed_group_retries(tmp_path):
     plugin._send_group_text = flaky_send  # type: ignore[method-assign]
     calls = _wire_providers(plugin, fx=None, vx=None)
     forecast = {"official_signal": _osig()}
-    asyncio.run(plugin._process_upstream_alert(forecast, ["100000001", "100000002"]))  # noqa: SLF001
+
+    async def round(n_expected: int) -> None:
+        await plugin._process_upstream_alert(
+            forecast, ["100000001", "100000002"]  # noqa: SLF001
+        )
+        while plugin._inflight:  # 等待后台管线完成
+            await asyncio.sleep(0.01)
+        assert len(sent) == n_expected, (n_expected, sent)
+
+    asyncio.run(asyncio.wait_for(round(1), 10))
     assert len(calls["fx"]) == 1  # A 成/B 败 → 本轮仅取一次全文
     assert sent == ["100000001"]
     assert _gstate(plugin, "100000001")["upstream_alert_keys"] == [
         "upstream-alert:signal:2097043464538264003:likely"
     ]
     assert _gstate(plugin, "100000002") == {}
-    asyncio.run(plugin._process_upstream_alert(forecast, ["100000001", "100000002"]))  # noqa: SLF001
+    asyncio.run(asyncio.wait_for(round(2), 10))
     assert sent == ["100000001", "100000002"]
 
 
@@ -2294,21 +2309,29 @@ def test_upstream_alert_keys_survive_state_reload(tmp_path):
     active 时，可能再次镜像一次。"""
     plugin = _make_plugin(tmp_path)
     _wire_providers(plugin, fx=None, vx=None)
-    asyncio.run(
-        plugin._process_upstream_alert(
+
+    async def run_and_drain() -> None:
+        await plugin._process_upstream_alert(
             {"official_signal": _osig()}, ["100000001"]  # noqa: SLF001
         )
-    )
+        while plugin._inflight:  # 等待后台管线完成
+            await asyncio.sleep(0.01)
+
+    asyncio.run(asyncio.wait_for(run_and_drain(), 10))
     assert (tmp_path / "reset_state.json").exists()
     reloaded = _make_plugin(tmp_path)
     assert _gstate(reloaded)["upstream_alert_keys"] == [
         "upstream-alert:signal:2097043464538264003:likely"
     ]
-    asyncio.run(
-        reloaded._process_upstream_alert(  # noqa: SLF001
+
+    async def rerun() -> None:
+        await reloaded._process_upstream_alert(  # noqa: SLF001
             {"official_signal": _osig()}, ["100000001"]
         )
-    )
+        while reloaded._inflight:
+            await asyncio.sleep(0.01)
+
+    asyncio.run(asyncio.wait_for(rerun(), 10))
     assert reloaded._ctx.send.sent_messages == []
 
 
@@ -2318,16 +2341,24 @@ def test_upstream_alert_keys_survive_without_feed_baseline(tmp_path):
     plugin = _make_plugin(tmp_path)
     _wire_providers(plugin, fx=None, vx=None)
     # 故意不做 feed baseline（receipt 无 feed_baseline_done/notified_keys）。
-    asyncio.run(
-        plugin._process_upstream_alert(
+
+    async def run_and_drain() -> None:
+        await plugin._process_upstream_alert(
             {"official_signal": _osig()}, ["100000001"]  # noqa: SLF001
         )
-    )
+        while plugin._inflight:  # 等待后台管线完成
+            await asyncio.sleep(0.01)
+
+    asyncio.run(asyncio.wait_for(run_and_drain(), 10))
     reloaded = _make_plugin(tmp_path)
     _wire_providers(reloaded, fx=None, vx=None)
     assert not _gstate(reloaded).get("feed_baseline_done")
+    # v0.1.9：三个 receipt 字段全部独立存活（无 baseline 的群亦不丢失）。
     assert _gstate(reloaded)["upstream_alert_keys"] == [
         "upstream-alert:signal:2097043464538264003:likely"
+    ]
+    assert _gstate(reloaded)["upstream_alert_tweet_ids"] == [
+        "2097043464538264003"
     ]
     # 重载后同一 upstream alert 静默（不得重复镜像）。
     asyncio.run(
@@ -2538,11 +2569,15 @@ def test_multi_group_single_fetch_shared_content(tmp_path):
     """多群同一 alert：全文只获取一次，两群复用同一内容。"""
     plugin = _make_plugin(tmp_path, group_id="", group_ids=["100000001", "100000002"])
     calls = _wire_providers(plugin, fx=_FX_GOLDEN)
-    asyncio.run(
-        plugin._process_upstream_alert(
+
+    async def fetch_once_and_mirror_both() -> None:
+        await plugin._process_upstream_alert(
             {"official_signal": _osig()}, ["100000001", "100000002"]  # noqa: SLF001
         )
-    )
+        while plugin._inflight:  # 等待后台管线完成
+            await asyncio.sleep(0.01)
+
+    asyncio.run(asyncio.wait_for(fetch_once_and_mirror_both(), 10))
     assert len(calls["fx"]) == 1 and calls["vx"] == []
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 2 and bodies[0] == bodies[1]
@@ -3381,6 +3416,10 @@ def test_golden_0908_l1_1_observed_becomes_short_confirm(tmp_path):
     _gstate(plugin)["feed_baseline_done"] = True
     _gstate(plugin)["notified_keys"] = list(L4_RECEIPTS)  # 同群已有 L4
     _gstate(plugin)["upstream_alert_keys"] = list(L4_RECEIPTS)
+    _gstate(plugin)["upstream_alert_tweet_ids"] = [
+        "2097043464538264003",
+        "2097174560412246215",
+    ]
     calls = _wire_providers(plugin, fx=_FX_GOLDEN)
     feed = _confirmation_feed()
     asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING))  # noqa: SLF001
@@ -3399,6 +3438,10 @@ def test_golden_0908_l1_2_confirmation_late_archive_is_silenced(tmp_path):
     _gstate(plugin)["feed_baseline_done"] = True
     _gstate(plugin)["notified_keys"] = list(L4_RECEIPTS)
     _gstate(plugin)["upstream_alert_keys"] = list(L4_RECEIPTS)
+    _gstate(plugin)["upstream_alert_tweet_ids"] = [
+        "2097043464538264003",
+        "2097174560412246215",
+    ]
     calls = _wire_providers(plugin, fx=_FX_GOLDEN)
     feed = _confirmation_feed()
     feed["events"] = [
@@ -3419,8 +3462,12 @@ def test_mixed_groups_same_event_four_quadrant(tmp_path):
         tmp_path, group_id="", group_ids=["100000001", "100000002"],
         llm_overrides={"enabled": True},
     )
-    # 群 A 已有两条 L4 receipt；群 B 没有
+    # 群 A 已有两条 L4 receipt（keys + 结构化 tweet receipt）；群 B 没有
     _gstate(plugin, "100000001")["upstream_alert_keys"] = list(L4_RECEIPTS)
+    _gstate(plugin, "100000001")["upstream_alert_tweet_ids"] = [
+        "2097043464538264003",
+        "2097174560412246215",
+    ]
     _gstate(plugin, "100000001")["feed_baseline_done"] = True
     _gstate(plugin, "100000002")["feed_baseline_done"] = True
     _gstate(plugin, "100000002")["notified_keys"] = []
@@ -3506,6 +3553,7 @@ def test_same_round_l4_l1_defers_then_receipt_confirms(tmp_path):
     _gstate(plugin)["upstream_alert_keys"] = [
         "upstream-alert:signal:2097043464538264003:likely"
     ]
+    _gstate(plugin)["upstream_alert_tweet_ids"] = ["2097043464538264003"]
     asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING, forecast))  # noqa: SLF001
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 1
@@ -3544,6 +3592,7 @@ def test_per_group_defer_with_existing_receipt(tmp_path):
     _gstate(plugin, "100000001")["upstream_alert_keys"] = [
         "upstream-alert:signal:2097174560412246215:likely"
     ]
+    _gstate(plugin, "100000001")["upstream_alert_tweet_ids"] = ["2097174560412246215"]
     _gstate(plugin, "100000001")["feed_baseline_done"] = True
     _gstate(plugin, "100000002")["feed_baseline_done"] = True
     _wire_providers(plugin, fx=_FX_GOLDEN)
@@ -3610,5 +3659,198 @@ def test_duplicate_fingerprint_missing_field_takes_over(tmp_path):
         if expected_observed:
             # source=operator-observed → observed=True → 确认型 primary
             assert bodies[0].startswith("✅ Codex 额度重置已确认生效"), f"variant {i}"
+
         else:
             assert "已宣告" in bodies[0], f"variant {i} 应为 declaration 形态"
+
+
+# ===== v0.1.9 修正轮：defer 契约门控 + 并发 receipt 注入回归 =====
+
+
+def test_defer_contract_gating_invalid_delivery(tmp_path):
+    """delivery != alerts → contract 不成立 → 不 defer，保守 A-primary。
+    event1 是 observed → 确认型 primary（非 declaration）。"""
+    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
+    _wire_providers(plugin, fx=None, vx=None)
+    forecast = {"official_signal": {**_osig(), "delivery_destination": "web"}}
+    feed = _event1_only_feed()
+    asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING, forecast))  # noqa: SLF001
+    bodies = [b for _, b in plugin._ctx.send.sent_messages]
+    assert len(bodies) == 1  # A-primary：未 defer
+    assert "✅ Codex 额度重置已确认生效" in bodies[0]
+
+
+def test_defer_contract_gating_missing_alert_event_id(tmp_path):
+    """alert_event_id 非空字符串要求不满足 → contract 不成立 → 不 defer。"""
+    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
+    _wire_providers(plugin, fx=None, vx=None)
+    forecast = {"official_signal": {**_osig(), "alert_event_id": ""}}
+    feed = _event1_only_feed()
+    asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING, forecast))  # noqa: SLF001
+    bodies = [b for _, b in plugin._ctx.send.sent_messages]
+    assert len(bodies) == 1  # A-primary：未 defer
+    assert "✅ Codex 额度重置已确认生效" in bodies[0]
+
+
+def test_defer_contract_gating_valid_contract_defers(tmp_path):
+    """正向对照：三项契约成立 → defer（不发不写）。"""
+    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
+    _wire_providers(plugin, fx=None, vx=None)
+    forecast = {"official_signal": _osig()}  # promise/likely/alerts 全齐
+    feed = _event1_only_feed()
+    asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING, forecast))  # noqa: SLF001
+    assert plugin._ctx.send.sent_messages == []  # defer
+    assert _gstate(plugin).get("notified_keys", []) == []  # 不写 key
+
+
+# ===== v0.1.9 修正轮：defer 契约门控 + 并发 receipt 注入回归 =====
+
+
+def test_defer_contract_gating_invalid_delivery(tmp_path):
+    """delivery != alerts → contract 不成立 → 不 defer，保守 A-primary。
+    event1 是 observed → 确认型 primary（非 declaration）。"""
+    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
+    _wire_providers(plugin, fx=None, vx=None)
+    _gstate(plugin)["feed_baseline_done"] = True  # 跳过 baseline，直达 dispatch
+    forecast = {"official_signal": {**_osig(), "delivery_destination": "web"}}
+    feed = _event1_only_feed()
+    asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING, forecast))  # noqa: SLF001
+    bodies = [b for _, b in plugin._ctx.send.sent_messages]
+    assert len(bodies) == 1  # A-primary：未 defer
+    assert "✅ Codex 额度重置已确认生效" in bodies[0]
+
+
+def test_defer_contract_gating_missing_alert_event_id(tmp_path):
+    """alert_event_id 非空字符串要求不满足 → contract 不成立 → 不 defer。"""
+    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
+    _wire_providers(plugin, fx=None, vx=None)
+    _gstate(plugin)["feed_baseline_done"] = True  # 跳过 baseline，直达 dispatch
+    forecast = {"official_signal": {**_osig(), "alert_event_id": ""}}
+    feed = _event1_only_feed()
+    asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING, forecast))  # noqa: SLF001
+    bodies = [b for _, b in plugin._ctx.send.sent_messages]
+    assert len(bodies) == 1  # A-primary：未 defer
+    assert "✅ Codex 额度重置已确认生效" in bodies[0]
+
+
+def test_defer_contract_gating_valid_contract_defers(tmp_path):
+    """正向对照：三项契约成立 → defer（不发不写）。"""
+    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
+    _wire_providers(plugin, fx=None, vx=None)
+    _gstate(plugin)["feed_baseline_done"] = True  # 跳过 baseline，直达 dispatch
+    forecast = {"official_signal": _osig()}  # promise/likely/alerts 全齐
+    feed = _event1_only_feed()
+    asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING, forecast))  # noqa: SLF001
+    assert plugin._ctx.send.sent_messages == []  # defer
+    assert _gstate(plugin).get("notified_keys", []) == []  # 不写 key
+
+
+
+
+def test_stuck_l1_midflight_receipt_downgrades_to_b(tmp_path):
+    """并发注入（observed）：L1 A-primary 在途（provider 挂起），期间
+    L4 tweet receipt 落盘 → 释放后发送前重分级为 B-confirm 短确认。"""
+    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
+    release = asyncio.Event()
+    fx_count = {"n": 0}
+
+    async def hanging_get(url, timeout_seconds):
+        if "api.fxtwitter.com" in url:
+            fx_count["n"] += 1
+            if fx_count["n"] == 1:
+                await release.wait()  # 首次挂起
+            return _FX_GOLDEN
+        return None
+
+    plugin._get_json = hanging_get  # type: ignore[method-assign]
+    observed_feed = _event1_only_feed()
+    signals = signals_from_feed(observed_feed)
+    signal = signals[0]
+
+    async def scenario():
+        task = asyncio.create_task(
+            plugin._l1_primary_pipeline(signal, feed=None, groups=["100000001"], beijing=BEIJING)
+        )
+        for _ in range(20):
+            if fx_count["n"] > 0:
+                break
+            await asyncio.sleep(0.05)
+        # 中途注入 L4 tweet receipt
+        _gstate(plugin)["upstream_alert_tweet_ids"] = ["2097043464538264003"]
+        release.set()
+        await asyncio.wait_for(task, 10)
+        return [b for _, b in plugin._ctx.send.sent_messages]
+
+    bodies = asyncio.run(asyncio.wait_for(scenario(), 10))
+    assert len(bodies) == 1
+    assert bodies[0].startswith("✅ Codex 额度重置已确认生效")
+
+
+def test_stuck_l1_midflight_injection_duplicate_c_silence(tmp_path):
+    """并发注入（duplicate）：live + claim + at 一致 + L4 tweet receipt →
+    发送前重分级为 C-silence。"""
+    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
+    release = asyncio.Event()
+    fx_count = {"n": 0}
+    dup_event = next(
+        e for e in _confirmation_feed()["events"]
+        if str(e["id"]) == "2097174560412246215"
+    )
+
+    async def hanging_get(url, timeout_seconds):
+        if "api.fxtwitter.com" in url:
+            fx_count["n"] += 1
+            if fx_count["n"] == 1:
+                await release.wait()
+            return _FX_GOLDEN
+        return None
+
+    plugin._get_json = hanging_get  # type: ignore[method-assign]
+    # 先注入 L4 tweet receipt（模拟 L4 已先行）
+    _gstate(plugin)["upstream_alert_tweet_ids"] = ["2097174560412246215"]
+    dup_signals = signals_from_feed(_confirmation_feed())
+    dup_signal = next(s for s in dup_signals if s.event_id == "2097174560412246215")
+    release.set()  # C-silence：立即放行（不需要 provider 数据，验证的是静默判定）
+
+    async def scenario():
+        await plugin._l1_primary_pipeline(
+            dup_signal, feed=None, groups=["100000001"], beijing=BEIJING,
+        )
+
+    asyncio.run(asyncio.wait_for(scenario(), 10))
+    assert plugin._ctx.send.sent_messages == []  # C-silence
+
+
+def test_mixed_injection_downgrade_vs_silence(tmp_path):
+    """混合群：A 注入 L4 tweet receipt → C-silence；B 无 receipt →
+    A-primary 全量。一个群的注入不影响另一个群的判定。"""
+    plugin = _llm_plugin(
+        tmp_path, group_id="", group_ids=["100000001", "100000002"],
+        llm_overrides={"enabled": False},
+    )
+    _gstate(plugin, "100000001")["feed_baseline_done"] = True
+    _gstate(plugin, "100000002")["feed_baseline_done"] = True
+    confirmed_event = next(
+        e for e in _confirmation_feed()["events"]
+        if str(e["id"]) == "2097174560412246215"
+    )
+    conf_tweet = next(
+        t for t in _confirmation_feed()["tweets"]
+        if str(t["id"]) == "2097174560412246215"
+    )
+    # A 群 L4 tweet receipt 已注入（C），B 群无 receipt → A-primary
+    _gstate(plugin, "100000001")["upstream_alert_tweet_ids"] = ["2097174560412246215"]
+
+    async def scenario():
+        await plugin._process_feed_signals(
+            {"events": [confirmed_event], "tweets": [conf_tweet]},
+            ["100000001", "100000002"], BEIJING,
+        )
+
+    asyncio.run(asyncio.wait_for(scenario(), 10))
+    by_group: dict[str, list[str]] = {}
+    for stream, body in plugin._ctx.send.sent_messages:
+        by_group.setdefault(stream, []).append(body)
+    assert "qq-group-100000001" not in by_group  # A：C-silence
+    assert len(by_group.get("qq-group-100000002", [])) == 1  # B：A-primary
+    assert "📢 Global Reset 已宣告" in by_group["qq-group-100000002"][0]

@@ -563,10 +563,17 @@ def _carry_validated_state(legacy: Any) -> dict[str, Any]:
     if not isinstance(legacy, dict):
         return carried
     keys = legacy.get("notified_keys")
-    if legacy.get("feed_baseline_done") is True and isinstance(keys, list) and all(
+    keys_valid = isinstance(keys, list) and all(
         isinstance(k, str) for k in keys
-    ):
+    )
+    if legacy.get("feed_baseline_done") is True and keys_valid:
+        # feed 车道：baseline 标志与 keys 成对携带（缺一即重新 baseline）。
         carried["feed_baseline_done"] = True
+        carried["notified_keys"] = list(keys)
+    elif keys_valid:
+        # v0.1.9：A-primary 可在无 baseline 的群上先落 declared receipt，
+        # 该 keys 必须独立保留（否则重载后同一 upstream alert 重复镜像）；
+        # baseline 标志仍不携带，下一轮会照常补齐 baseline。
         carried["notified_keys"] = list(keys)
     # L4 mirror receipt 独立于 feed baseline 配对校验：新群未完成 baseline
     # 时也可能已有镜像记录，不得因 L1 配对失败而丢失（否则重载后同一
@@ -575,6 +582,11 @@ def _carry_validated_state(legacy: Any) -> dict[str, Any]:
     alert_keys = legacy.get("upstream_alert_keys")
     if isinstance(alert_keys, list) and all(isinstance(k, str) for k in alert_keys):
         carried["upstream_alert_keys"] = list(alert_keys)
+    # 结构化 tweet receipt 同样独立携带；类型损坏整体丢弃（方向保守：
+    # 最多对当前有效告警多镜像一次，绝不静默吞掉后续告警）。
+    tweet_ids = legacy.get("upstream_alert_tweet_ids")
+    if isinstance(tweet_ids, list) and all(isinstance(k, str) for k in tweet_ids):
+        carried["upstream_alert_tweet_ids"] = list(tweet_ids)
     reset_at = _parse_iso(legacy.get("last_notified_reset_at"))
     if reset_at is not None:
         carried["last_notified_reset_at"] = reset_at.isoformat()
@@ -808,7 +820,10 @@ def is_observed_declaration(
     return (
         str(observation_result or "").strip() == "reset_observed"
         or str(source or "").strip() == "operator-observed"
-        or bool(str(observed_at or "").strip())
+        or (
+            bool(str(observed_at or "").strip())
+            and _parse_iso(observed_at) is not None
+        )
     )
 
 
@@ -1848,9 +1863,13 @@ class CodexResetWatcher(MaiBotPlugin):
             if signal.lane != "banked":
                 # v0.1.9 Confirmation Lane：declared 信号按群四格决策
                 # （A-primary / B-confirm / C-silence，见 _dispatch_declared_signal）。
-                osig = forecast.get("official_signal") if isinstance(forecast, dict) else None
-                osig = osig if isinstance(osig, dict) else {}
-                osig_tweet_id = str(osig.get("tweet_id") or "").strip()
+                # defer 只能由满足 L4 三项最小触发契约的 official_signal
+                # 触发；contract 不成立 → 不 defer，保守 A-primary。
+                osig_tweet_id = ""
+                if upstream_alert_event_id(forecast) is not None:
+                    osig = forecast.get("official_signal")
+                    osig = osig if isinstance(osig, dict) else {}
+                    osig_tweet_id = str(osig.get("tweet_id") or "").strip()
                 await self._dispatch_declared_signal(
                     signal, new_for, feed, beijing, osig_tweet_id
                 )
@@ -1916,7 +1935,9 @@ class CodexResetWatcher(MaiBotPlugin):
             return
         self._inflight[key] = {
             "task": asyncio.create_task(
-                self._alert_pipeline(key, osig, feed, pending),
+                self._alert_pipeline(
+                    key, osig, osig_tweet_id, feed, pending
+                ),
                 name=f"codex-alert-{alert_event_id}",
             ),
             "kind": "l4",
@@ -1925,7 +1946,8 @@ class CodexResetWatcher(MaiBotPlugin):
         }
 
     async def _alert_pipeline(
-        self, key: str, osig: dict[str, Any], feed: Any, pending: list[str]
+        self, key: str, osig: dict[str, Any], osig_tweet_id: str,
+        feed: Any, pending: list[str]
     ) -> None:
         """单条 upstream alert 的后台处理管线（v0.1.8）。
 
@@ -1961,6 +1983,15 @@ class CodexResetWatcher(MaiBotPlugin):
                         entry = self._group_state(group_id)
                         seen = set(entry.get("upstream_alert_keys") or [])
                         entry["upstream_alert_keys"] = sorted(seen | {key})
+                        # 结构化 tweet receipt：缺 tweet_id（上游字段缺失）
+                        # 时不记录 → 后续 L1 保守视为未覆盖，不静默。
+                        if osig_tweet_id:
+                            seen_tweets = set(
+                                entry.get("upstream_alert_tweet_ids") or []
+                            )
+                            entry["upstream_alert_tweet_ids"] = sorted(
+                                seen_tweets | {osig_tweet_id}
+                            )
                         self._save_state()
         except Exception:
             logger.exception("Upstream 告警处理管线异常：%s", key)
@@ -2195,11 +2226,12 @@ class CodexResetWatcher(MaiBotPlugin):
         return best
 
     def _group_l4_alerted(self, group_id: str, tweet_id: str) -> bool:
-        """per-group 判定：该群 upstream_alert_keys 中是否已存在对当前
-        tweet 的 L4 receipt（upstream-alert:*:{tweet_id}:*）。不读其他群。"""
+        """per-group 判定：该群是否已记录当前 tweet 的结构化 L4 receipt
+        （upstream_alert_tweet_ids，由 official_signal.tweet_id 显式记录）。
+        不读其他群；receipt 缺失（含旧 state 未记录 tweet_id）→ 保守视为
+        未覆盖，不通过 alert_event_id 字符串反推 tweet_id。"""
         entry = self._group_state(group_id)
-        marker = f":{tweet_id}:"
-        return any(marker in str(k) for k in (entry.get("upstream_alert_keys") or []))
+        return tweet_id in set(entry.get("upstream_alert_tweet_ids") or [])
 
     async def _record_declared_key(self, group_id: str, key: str) -> None:
         """declared 车道 receipt 落盘（send 成功 / C 抑制决策共用）。"""
@@ -2357,11 +2389,39 @@ class CodexResetWatcher(MaiBotPlugin):
                 observed=observed,
             )
             current = set(self._target_groups())
+            duplicate = is_duplicate_live_confirmation(
+                source=signal.source,
+                explicit_reset_claim=signal.explicit_reset_claim,
+                announced_at=signal.announced_at,
+                tweet_at=signal.tweet_at,
+                l4_already=True,  # 候选取优用：l4_now=True 时才真正生效
+            )
             for group_id in groups:
                 if group_id not in current:
                     logger.info("L1 primary 跳过已移除群：%s", group_id)
                     continue
-                if await self._send_group_text(group_id, message):
+                # 发送前 per-group 重分级（v0.1.9 修正轮）：等待 Content/LLM
+                # 期间 L4 receipt 可能已落盘 → observed 降级 B；duplicate
+                # 升级 C；否则保持 A。
+                l4_now = self._group_l4_alerted(group_id, signal.event_id)
+                decision = classify_declared_signal(
+                    observed=observed,
+                    l4_already=l4_now,
+                    duplicate_confirmation=(
+                        duplicate if l4_now else False
+                    ),
+                )
+                if decision == "C_SILENCE":
+                    logger.info(
+                        "L1 primary → C-silence：群 %s 已被 L4 覆盖", group_id,
+                    )
+                    await self._record_declared_key(group_id, signal.key)
+                    continue
+                if decision == "B_CONFIRM":
+                    msg = build_confirm_effective_message(signal.observed_at)
+                else:
+                    msg = message
+                if await self._send_group_text(group_id, msg):
                     logger.info("Feed 通知已发送：群 %s %s", group_id, signal.key)
                     await self._record_declared_key(group_id, signal.key)
         except Exception:
