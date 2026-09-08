@@ -1,0 +1,34 @@
+[plugin]
+enabled = true
+config_version = "1.2.0"
+
+[watcher]
+# 通知群号列表：WebUI 中逐项添加，每群独立发送与独立重试。
+group_ids = []
+# 以下两项为内部/兼容字段（WebUI 隐藏）：group_ids_migrated 是 legacy
+# 单群配置的一次性迁移标记；group_id 仅作 0.1.2 升级迁移与回滚兼容。
+group_ids_migrated = false
+group_id = ""
+check_interval = 240
+timezone = "Asia/Shanghai"
+tibo_base = "https://tibo.modelyard.dev"
+codex_base = "https://codex-reset.com"
+
+[llm]
+# AI 解读（LLM enrichment）：复用 MaiBot Host 模型任务，对完整/截断
+# 原文做翻译、摘要与关键信息提取；失败/超时自动降级为普通通知，
+# 不影响告警本身。
+enabled = true
+# MaiBot 模型任务名（model_task_config 下的任务，如 utils/replyer）。
+model_task = "replyer"
+temperature = 0.2
+max_tokens = 4096
+# 单条告警 LLM 分析的总预算（秒）：首次分析+一次修复共用。
+timeout_seconds = 600
+# 分析提示词（可自定义关注重点与风格；底层 JSON 契约不受影响）。
+prompt = """请阅读 <SOURCE_TEXT> 中的 Tibo 原文，完成以下分析：
+1. 给出自然、准确的中文翻译；
+2. 用一句话概括最重要的信息；
+3. 提取 Codex 重置相关关键信息：重置类型、影响范围、时间/时间范围、是否为大致时间，以及其他重要信息；
+4. 说明玩笑、梗、反讽或容易误解的语境；
+5. 明确指出不确定性，不要补全原文没有确定表达的事实。"""
