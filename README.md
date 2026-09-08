@@ -28,11 +28,6 @@ Banked Reset 通知必须声明：存入账户供之后**手动兑换**，不代
 | `codex_reset_watcher/_manifest.json` | 插件清单（id `codex-reset.watcher`，v0.1.5） |
 | `codex_reset_watcher/config.toml` | 默认配置样例 |
 | `test_watcher.py` | pytest（93 项，真实 fixture 优先） |
-| `probe_*.json` / `live/*.json` | 真实 API 样本（见 `docs/fixtures.md`） |
-| `docs/architecture.md` | 数据源职责、双车道、设计理由与已知限制 |
-| `docs/event-model.md` | 通知类型、事件状态、去重与静默规则 |
-| `docs/operations.md` | 生产部署、升级、日志检查、状态文件、回滚、禁止事项 |
-| `docs/fixtures.md` | 真实样本来源与用途 |
 
 ## 安装与配置
 
@@ -51,13 +46,12 @@ tibo_base = "https://tibo.modelyard.dev"
 codex_base = "https://codex-reset.com"
 ```
 
+
 ## 状态文件
 
 `<plugin-data>/codex-reset.watcher/reset_state.json`（0.1.3 起 `version: 6`）：
 `groups.{群号}` 下按群独立保存 `feed_baseline_done` / `notified_keys`
 （feed 去重键）与 Tibo 去重状态（per-group receipt）。由插件自动迁移与
-写入，**禁止手工编辑**。语义见 `docs/event-model.md`，生产路径与回滚见
-`docs/operations.md`。
 
 ## 验证
 

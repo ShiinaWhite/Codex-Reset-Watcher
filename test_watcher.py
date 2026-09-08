@@ -3672,45 +3672,6 @@ def test_defer_contract_gating_invalid_delivery(tmp_path):
     event1 是 observed → 确认型 primary（非 declaration）。"""
     plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
     _wire_providers(plugin, fx=None, vx=None)
-    forecast = {"official_signal": {**_osig(), "delivery_destination": "web"}}
-    feed = _event1_only_feed()
-    asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING, forecast))  # noqa: SLF001
-    bodies = [b for _, b in plugin._ctx.send.sent_messages]
-    assert len(bodies) == 1  # A-primary：未 defer
-    assert "✅ Codex 额度重置已确认生效" in bodies[0]
-
-
-def test_defer_contract_gating_missing_alert_event_id(tmp_path):
-    """alert_event_id 非空字符串要求不满足 → contract 不成立 → 不 defer。"""
-    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
-    _wire_providers(plugin, fx=None, vx=None)
-    forecast = {"official_signal": {**_osig(), "alert_event_id": ""}}
-    feed = _event1_only_feed()
-    asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING, forecast))  # noqa: SLF001
-    bodies = [b for _, b in plugin._ctx.send.sent_messages]
-    assert len(bodies) == 1  # A-primary：未 defer
-    assert "✅ Codex 额度重置已确认生效" in bodies[0]
-
-
-def test_defer_contract_gating_valid_contract_defers(tmp_path):
-    """正向对照：三项契约成立 → defer（不发不写）。"""
-    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
-    _wire_providers(plugin, fx=None, vx=None)
-    forecast = {"official_signal": _osig()}  # promise/likely/alerts 全齐
-    feed = _event1_only_feed()
-    asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING, forecast))  # noqa: SLF001
-    assert plugin._ctx.send.sent_messages == []  # defer
-    assert _gstate(plugin).get("notified_keys", []) == []  # 不写 key
-
-
-# ===== v0.1.9 修正轮：defer 契约门控 + 并发 receipt 注入回归 =====
-
-
-def test_defer_contract_gating_invalid_delivery(tmp_path):
-    """delivery != alerts → contract 不成立 → 不 defer，保守 A-primary。
-    event1 是 observed → 确认型 primary（非 declaration）。"""
-    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
-    _wire_providers(plugin, fx=None, vx=None)
     _gstate(plugin)["feed_baseline_done"] = True  # 跳过 baseline，直达 dispatch
     forecast = {"official_signal": {**_osig(), "delivery_destination": "web"}}
     feed = _event1_only_feed()
