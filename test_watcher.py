@@ -3706,112 +3706,113 @@ def test_defer_contract_gating_valid_contract_defers(tmp_path):
     assert _gstate(plugin).get("notified_keys", []) == []  # 不写 key
 
 
-
-
-def test_stuck_l1_midflight_receipt_downgrades_to_b(tmp_path):
-    """并发注入（observed）：L1 A-primary 在途（provider 挂起），期间
-    L4 tweet receipt 落盘 → 释放后发送前重分级为 B-confirm 短确认。"""
-    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
-    release = asyncio.Event()
-    fx_count = {"n": 0}
-
-    async def hanging_get(url, timeout_seconds):
-        if "api.fxtwitter.com" in url:
-            fx_count["n"] += 1
-            if fx_count["n"] == 1:
-                await release.wait()  # 首次挂起
-            return _FX_GOLDEN
-        return None
-
-    plugin._get_json = hanging_get  # type: ignore[method-assign]
-    observed_feed = _event1_only_feed()
-    signals = signals_from_feed(observed_feed)
-    signal = signals[0]
-
-    async def scenario():
-        task = asyncio.create_task(
-            plugin._l1_primary_pipeline(signal, feed=None, groups=["100000001"], beijing=BEIJING)
-        )
-        for _ in range(20):
-            if fx_count["n"] > 0:
-                break
-            await asyncio.sleep(0.05)
-        # 中途注入 L4 tweet receipt
-        _gstate(plugin)["upstream_alert_tweet_ids"] = ["2097043464538264003"]
-        release.set()
-        await asyncio.wait_for(task, 10)
-        return [b for _, b in plugin._ctx.send.sent_messages]
-
-    bodies = asyncio.run(asyncio.wait_for(scenario(), 10))
-    assert len(bodies) == 1
-    assert bodies[0].startswith("✅ Codex 额度重置已确认生效")
-
-
-def test_stuck_l1_midflight_injection_duplicate_c_silence(tmp_path):
-    """并发注入（duplicate）：live + claim + at 一致 + L4 tweet receipt →
-    发送前重分级为 C-silence。"""
-    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
-    release = asyncio.Event()
-    fx_count = {"n": 0}
-    dup_event = next(
-        e for e in _confirmation_feed()["events"]
-        if str(e["id"]) == "2097174560412246215"
-    )
-
-    async def hanging_get(url, timeout_seconds):
-        if "api.fxtwitter.com" in url:
-            fx_count["n"] += 1
-            if fx_count["n"] == 1:
-                await release.wait()
-            return _FX_GOLDEN
-        return None
-
-    plugin._get_json = hanging_get  # type: ignore[method-assign]
-    # 先注入 L4 tweet receipt（模拟 L4 已先行）
-    _gstate(plugin)["upstream_alert_tweet_ids"] = ["2097174560412246215"]
-    dup_signals = signals_from_feed(_confirmation_feed())
-    dup_signal = next(s for s in dup_signals if s.event_id == "2097174560412246215")
-    release.set()  # C-silence：立即放行（不需要 provider 数据，验证的是静默判定）
-
-    async def scenario():
-        await plugin._l1_primary_pipeline(
-            dup_signal, feed=None, groups=["100000001"], beijing=BEIJING,
-        )
-
-    asyncio.run(asyncio.wait_for(scenario(), 10))
-    assert plugin._ctx.send.sent_messages == []  # C-silence
-
-
-def test_mixed_injection_downgrade_vs_silence(tmp_path):
-    """混合群：A 注入 L4 tweet receipt → C-silence；B 无 receipt →
-    A-primary 全量。一个群的注入不影响另一个群的判定。"""
+@pytest.mark.parametrize("event_id", ["2097043464538264003", "2097174560412246215"])
+@pytest.mark.parametrize("mixed_groups", [False, True], ids=["single-group", "mixed-groups"])
+def test_l1_midflight_receipt_reclassifies_before_send(tmp_path, event_id, mixed_groups):
+    """Provider 确认挂起后注入 receipt：observed → B，duplicate → C；未注入群保持 A。"""
+    groups = ["100000001", "100000002"] if mixed_groups else ["100000001"]
     plugin = _llm_plugin(
-        tmp_path, group_id="", group_ids=["100000001", "100000002"],
-        llm_overrides={"enabled": False},
+        tmp_path, group_id="", group_ids=groups, llm_overrides={"enabled": False},
     )
-    _gstate(plugin, "100000001")["feed_baseline_done"] = True
-    _gstate(plugin, "100000002")["feed_baseline_done"] = True
-    confirmed_event = next(
-        e for e in _confirmation_feed()["events"]
-        if str(e["id"]) == "2097174560412246215"
-    )
-    conf_tweet = next(
-        t for t in _confirmation_feed()["tweets"]
-        if str(t["id"]) == "2097174560412246215"
-    )
-    # A 群 L4 tweet receipt 已注入（C），B 群无 receipt → A-primary
-    _gstate(plugin, "100000001")["upstream_alert_tweet_ids"] = ["2097174560412246215"]
+    signal = next(s for s in signals_from_feed(_confirmation_feed()) if s.event_id == event_id)
 
     async def scenario():
-        await plugin._process_feed_signals(
-            {"events": [confirmed_event], "tweets": [conf_tweet]},
-            ["100000001", "100000002"], BEIJING,
-        )
+        entered = asyncio.Event()
+        release = asyncio.Event()
 
-    asyncio.run(asyncio.wait_for(scenario(), 10))
-    by_group: dict[str, list[str]] = {}
-    for stream, body in plugin._ctx.send.sent_messages:
-        by_group.setdefault(stream, []).append(body)
-    assert "qq-group-100000001" not in by_group  # A：C-silence
-    assert len(by_group.get("qq-group-100000002", [])) == 1  # B：A-primary
-    assert "📢 Global Reset 已宣告" in by_group["qq-group-100000002"][0]
+        async def hanging_get(url, timeout_seconds):
+            assert "api.fxtwitter.com" in url
+            entered.set()
+            await release.wait()
+            return _FX_GOLDEN
+
+        plugin._get_json = hanging_get
+        task = asyncio.create_task(plugin._l1_primary_pipeline(signal, None, groups, BEIJING))
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+            assert not task.done()
+            assert plugin._ctx.send.sent_messages == []
+            assert all(not _gstate(plugin, g).get("upstream_alert_tweet_ids") for g in groups)
+            async with plugin._state_lock:
+                _gstate(plugin, groups[0])["upstream_alert_tweet_ids"] = [event_id]
+                plugin._save_state()
+            release.set()
+            await asyncio.wait_for(task, 2)
+        finally:
+            release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+    by_group = {g: [body for stream, body in plugin._ctx.send.sent_messages
+                    if stream == f"qq-group-{g}"] for g in groups}
+    if event_id == "2097043464538264003":
+        assert by_group[groups[0]] == [plugin_module.build_confirm_effective_message(signal.observed_at)]
+    else:
+        assert by_group[groups[0]] == []
+    if mixed_groups:
+        assert len(by_group[groups[1]]) == 1
+        assert "Tibo 原文：" in by_group[groups[1]][0]
+        assert not _gstate(plugin, groups[1]).get("upstream_alert_tweet_ids")
+    assert plugin._ctx.llm.generate_calls == []
+    plugin._load_state()
+    for group in groups:
+        assert signal.key in _gstate(plugin, group)["notified_keys"]
+    assert _gstate(plugin, groups[0])["upstream_alert_tweet_ids"] == [event_id]
+
+
+@pytest.mark.parametrize("late_tweet_id", [False, True], ids=["upgrade-existing-key", "late-tweet-id"])
+def test_l4_backfill_persists_silently_and_is_idempotent(tmp_path, late_tweet_id):
+    """已有 alert key 的升级与同 alert 后补 tweet_id，均静默持久化且不重复写盘。"""
+    plugin = _llm_plugin(tmp_path, llm_overrides={"enabled": True})
+    calls = _wire_providers(plugin, fx=_FX_GOLDEN)
+    osig = _osig()
+    key = f"upstream-alert:{osig['alert_event_id']}"
+    _gstate(plugin)["upstream_alert_keys"] = [key]
+    _gstate(plugin)["upstream_alert_tweet_ids"] = ["older-receipt"]
+    plugin._save_state()
+    before = plugin._state_path().read_bytes()
+
+    async def scenario():
+        if late_tweet_id:
+            await plugin._process_upstream_alert({"official_signal": {**osig, "tweet_id": None}}, ["100000001"])
+            assert plugin._state_path().read_bytes() == before
+            assert _gstate(plugin)["upstream_alert_tweet_ids"] == ["older-receipt"]
+        await plugin._process_upstream_alert({"official_signal": osig}, ["100000001"])
+        assert _gstate(plugin)["upstream_alert_tweet_ids"] == sorted(["older-receipt", osig["tweet_id"]])
+        plugin._load_state()
+        assert _gstate(plugin)["upstream_alert_tweet_ids"] == sorted(["older-receipt", osig["tweet_id"]])
+        saved = plugin._state_path().read_bytes()
+        def unexpected_save():
+            pytest.fail("idempotent backfill must not write state again")
+        plugin._save_state = unexpected_save
+        await plugin._process_upstream_alert({"official_signal": osig}, ["100000001"])
+        assert plugin._state_path().read_bytes() == saved
+
+    asyncio.run(scenario())
+    assert plugin._ctx.send.sent_messages == []
+    assert calls == {"fx": [], "vx": []}
+    assert plugin._ctx.llm.generate_calls == []
+    assert plugin._inflight == {}
+    assert _gstate(plugin)["upstream_alert_keys"] == [key]
+
+
+@pytest.mark.parametrize("override", [
+    {"tweet_id": None}, {"tweet_id": ""},
+    {"delivery_destination": "web"}, {"alert_event_id": ""},
+], ids=["no-tweet-id", "empty-tweet-id", "invalid-delivery", "no-alert-id"])
+def test_l4_backfill_requires_explicit_tweet_id_and_valid_contract(tmp_path, override):
+    """不从 alert ID 猜 tweet ID；无效契约不补写 receipt。"""
+    plugin = _llm_plugin(tmp_path)
+    calls = _wire_providers(plugin, fx=_FX_GOLDEN)
+    _gstate(plugin)["upstream_alert_keys"] = [f"upstream-alert:{_osig()['alert_event_id']}"]
+    plugin._save_state()
+    before = plugin._state_path().read_bytes()
+    asyncio.run(plugin._process_upstream_alert({"official_signal": _osig(**override)}, ["100000001"]))
+    assert not _gstate(plugin).get("upstream_alert_tweet_ids")
+    assert plugin._state_path().read_bytes() == before
+    assert plugin._ctx.send.sent_messages == []
+    assert calls == {"fx": [], "vx": []}
+    assert plugin._ctx.llm.generate_calls == []
+    assert plugin._inflight == {}
