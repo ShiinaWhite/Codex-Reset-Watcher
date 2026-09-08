@@ -1,18 +1,19 @@
-# Codex 额度重置提醒插件（v0.1.8 · 多群通知）
+# Codex 额度重置提醒插件（v0.1.9 · 多群通知 + L1 确认车道）
 
 长期监控 OpenAI Codex / ChatGPT Work 的**全局额度重置**与 **Banked Reset
 生命周期**，向 QQ 群（北京时间）发送通知。只消费上游结构化字段做语义判定，
 Tibo 原文仅作通知展示；上游未形成面向用户的告警时保持静默，插件不自行
 创造告警。
 
-**当前状态**：0.1.8 为当前稳定版本（多群通知 / age-guard 去噪 / upstream
-alert 镜像 / Tweet 全文补全 / LLM 解读均稳定运行）。
+**当前状态**：0.1.9 候选（新增 L1 Reset Confirmation Lane：declared 
+事件按 per-group 四格决策分级为 短确认 / 完整首条通知 / 静默；
+0.1.8 的 upstream alert 镜像 / Tweet 全文补全 / LLM 解读保持不变）。
 
 ## 数据源与车道（一页速览）
 
 | 源 | 职责 |
 |---|---|
-| `codex-reset.com/api/feed`（主源） | Banked 生命周期（announced/arriving/available 各通知一次）+ Global declared 生命周期通知 |
+| `codex-reset.com/api/feed`（主源） | Banked 生命周期（announced/arriving/available 各通知一次）+ Global declared 生命周期通知（v0.1.9 起按 observed × 本群 L4 receipt 分级：短确认 / 完整 / 静默） |
 | Tibo `/api/reset/current`（辅助源） | Global 精确时间：`SCHEDULED`+精确 → 已确认/时间更新；`SCHEDULED`+近似 → 预估 |
 | `/api/forecast`（告警镜像源） | 仅消费 `official_signal`（上游已决定面向用户告警的信号）：`delivery_destination=="alerts"` + `alert_event_id` 即镜像，dedup = `upstream-alert:{alert_event_id}`；`latest_alert`/`probabilities` 不消费 |
 | `/feed.xml`、`/api/timeline` | 不消费 |
@@ -27,8 +28,9 @@ Banked Reset 通知必须声明：存入账户供之后**手动兑换**，不代
 | `codex_reset_watcher/plugin.py` | 插件主体（唯一业务代码） |
 | `codex_reset_watcher/_manifest.json` | 插件清单（id `codex-reset.watcher`，v0.1.8） |
 | `codex_reset_watcher/config.toml` | 默认配置样例 |
-| `test_watcher.py` | pytest（159 项，真实 fixture 优先） |
+| `test_watcher.py` | pytest（168 项，真实 fixture 优先） |
 | `probe_*.json` / `live/*.json` | 真实 API 样本（公开接口响应） |
+| `live/forensic_0908/replay/` | Historical Replay：7 个真实 Reset lifecycle corpus + 离线策略模拟（pytest 门禁 `test_replay_corpus.py`） |
 
 ## 安装与配置
 
@@ -66,7 +68,7 @@ prompt = """（内置默认分析提示词，可在 WebUI 多行编辑）"""
 
 ```bash
 python -m pytest test_watcher.py -q
-# 159 passed（测试全部离线：fixture 驱动，不发起任何网络请求）
+# 168 passed（测试全部离线：fixture 驱动，不发起任何网络请求）
 ```
 
 ## 数据来源说明

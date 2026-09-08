@@ -3467,9 +3467,12 @@ def test_confirmation_primary_uses_provider_full_text(tmp_path):
     asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING))  # noqa: SLF001
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 1
-    assert "📢 Global Reset 已宣告" in bodies[0]
+    # observed A-primary：确认型 primary（该群从未收到此事件的通知）
+    assert bodies[0].startswith("✅ Codex 额度重置已确认生效")
+    assert "确认时间：北京时间 9月8日 09:34" in bodies[0]
     assert "Tibo 原文：" in bodies[0] and "Lands around 6pm PST today" in bodies[0]
     assert "Tibo 原文摘录" not in bodies[0]
+    assert "已宣告" not in bodies[0]
 
 
 def test_confirmation_short_message_omits_unparseable_observed_at(tmp_path):
@@ -3477,3 +3480,135 @@ def test_confirmation_short_message_omits_unparseable_observed_at(tmp_path):
     from codex_reset_watcher.plugin import build_confirm_effective_message
     assert build_confirm_effective_message("not-a-date") == "✅ Codex 额度重置已确认生效"
     assert build_confirm_effective_message(None) == "✅ Codex 额度重置已确认生效"
+
+
+# ===== v0.1.9 修正轮：同轮 defer / 接管 / duplicate 指纹负例 =====
+
+def _event1_only_feed() -> dict:
+    feed = _confirmation_feed()
+    feed["events"] = [e for e in feed["events"] if str(e["id"]) == "2097043464538264003"]
+    return feed
+
+
+def test_same_round_l4_l1_defers_then_receipt_confirms(tmp_path):
+    """同轮 same-tweet Feed+Forecast：L4 先行调度，L1 defer 不发送；
+    receipt 落地后下一轮 → B-confirm 短确认。"""
+    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
+    _gstate(plugin)["feed_baseline_done"] = True  # 模拟已在运行的系统
+    calls = _wire_providers(plugin, fx=_FX_GOLDEN)
+    forecast = {"official_signal": _osig()}  # same tweet
+    feed = _event1_only_feed()
+    asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING, forecast))  # noqa: SLF001
+    assert plugin._ctx.send.sent_messages == []  # defer：0 发送
+    assert calls["fx"] == []  # defer：0 Provider
+    assert _gstate(plugin).get("notified_keys", []) == []  # defer 不写任何 key
+    # 下一轮：L4 receipt 已落地（模拟 L4 发送成功）→ B-confirm 短确认
+    _gstate(plugin)["upstream_alert_keys"] = [
+        "upstream-alert:signal:2097043464538264003:likely"
+    ]
+    asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING, forecast))  # noqa: SLF001
+    bodies = [b for _, b in plugin._ctx.send.sent_messages]
+    assert len(bodies) == 1
+    assert bodies[0].startswith("✅ Codex 额度重置已确认生效")
+    assert "确认时间：北京时间 9月8日 09:34" in bodies[0]
+
+
+def test_defer_released_when_forecast_clears(tmp_path):
+    """defer 后上游清除 official_signal 且仍无 receipt → L1 保守接管
+    A-primary（完整通知），不会永久 defer。"""
+    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
+    _gstate(plugin)["feed_baseline_done"] = True  # 模拟已在运行的系统
+    calls = _wire_providers(plugin, fx=None, vx=None)  # providers 全挂 → forecast 摘录兜底
+    feed = _event1_only_feed()
+    forecast = {"official_signal": _osig()}
+    asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING, forecast))  # noqa: SLF001
+    assert plugin._ctx.send.sent_messages == []  # 第一轮 defer
+    # 下一轮：official_signal 清除（forecast 不再暴露）→ A-primary 接管
+    asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING, None))  # noqa: SLF001
+    bodies = [b for _, b in plugin._ctx.send.sent_messages]
+    assert len(bodies) == 1
+    # observed A-primary → 确认型 primary；providers 全挂 → feed 摘录兜底
+    assert bodies[0].startswith("✅ Codex 额度重置已确认生效")
+    assert "确认时间：北京时间 9月8日 09:34" in bodies[0]
+    assert "Tibo 原文摘录：" in bodies[0]
+    assert "global-declared:2097043464538264003" in _gstate(plugin)["notified_keys"]
+
+
+def test_per_group_defer_with_existing_receipt(tmp_path):
+    """per-group defer：群 A 已有 L4 receipt（confirmation → C-silence），
+    群 B 无 receipt → defer；osig 清除后 B 接管 A-primary；A 不重复。"""
+    plugin = _llm_plugin(
+        tmp_path, group_id="", group_ids=["100000001", "100000002"],
+        llm_overrides={"enabled": False},
+    )
+    _gstate(plugin, "100000001")["upstream_alert_keys"] = [
+        "upstream-alert:signal:2097174560412246215:likely"
+    ]
+    _gstate(plugin, "100000001")["feed_baseline_done"] = True
+    _gstate(plugin, "100000002")["feed_baseline_done"] = True
+    _wire_providers(plugin, fx=_FX_GOLDEN)
+    feed = {"events": [e for e in _confirmation_feed()["events"] if str(e["id"]) == "2097174560412246215"]}
+    feed["tweets"] = [t for t in _confirmation_feed()["tweets"] if str(t["id"]) == "2097174560412246215"]
+    forecast = {"official_signal": _osig( tweet_id="2097174560412246215", alert_event_id="signal:2097174560412246215:likely")}
+    asyncio.run(plugin._process_feed_signals(feed, ["100000001", "100000002"], BEIJING, forecast))  # noqa: SLF001
+    by_group: dict[str, list[str]] = {}
+    for stream, body in plugin._ctx.send.sent_messages:
+        by_group.setdefault(stream, []).append(body)
+    assert "qq-group-100000001" not in by_group  # A：C-silence
+    assert "qq-group-100000002" not in by_group  # B：defer（osig 同 tweet 在）
+    assert "global-declared:2097174560412246215" in _gstate(plugin, "100000001")["notified_keys"]
+    assert _gstate(plugin, "100000002").get("notified_keys", []) == []  # defer 不写 key
+    # osig 清除 → B 接管 A-primary；A 已 handled 不重复
+    asyncio.run(plugin._process_feed_signals(feed, ["100000001", "100000002"], BEIJING, None))  # noqa: SLF001
+    by_group2: dict[str, list[str]] = {}
+    for stream, body in plugin._ctx.send.sent_messages:
+        by_group2.setdefault(stream, []).append(body)
+    assert len(by_group2.get("qq-group-100000002", [])) == 1  # B 接管
+    assert len(by_group2.get("qq-group-100000001", [])) == 0  # A 不重复
+
+
+def test_duplicate_fingerprint_missing_field_takes_over(tmp_path):
+    """spec 7：duplicate 指纹任一字段缺失/不一致 → 不得 C-silence，
+    A-primary 照常发送（防 schema 漂移造成静默漏报）。"""
+    base_event = next(
+        e for e in _confirmation_feed()["events"]
+        if str(e["id"]) == "2097174560412246215"
+    )
+    base_tweet = next(
+        t for t in _confirmation_feed()["tweets"]
+        if str(t["id"]) == "2097174560412246215"
+    )
+    # (变体, 期望 observed)：source=operator-observed → observed=True →
+    # 确认型 primary 文案；其余变体 observed=False → declaration 形态。
+    variants = [
+        ({"events": [{**base_event, "source": ""}], "tweets": [base_tweet]}, False),
+        ({"events": [{**base_event, "source": "operator-observed"}], "tweets": [base_tweet]}, True),
+        ({"events": [base_event], "tweets": [{**base_tweet, "explicit_reset_claim": False}]}, False),
+        ({"events": [base_event], "tweets": [{**base_tweet, "explicit_reset_claim": None}]}, False),
+        ({"events": [base_event], "tweets": [{**base_tweet, "at": "2026-09-08T04:05:54.000Z"}]}, False),
+        ({"events": [base_event], "tweets": [{k: v for k, v in base_tweet.items() if k != "at"}]}, False),
+    ]
+    for i, (variant, expected_observed) in enumerate(variants):
+        plugin = _make_plugin(tmp_path / f"case{i}")
+        _gstate(plugin)["feed_baseline_done"] = True
+        _gstate(plugin)["notified_keys"] = [
+            "upstream-alert:signal:2097174560412246215:likely"
+        ]
+        _gstate(plugin)["upstream_alert_keys"] = [
+            "upstream-alert:signal:2097174560412246215:likely"
+        ]
+        _wire_providers(plugin, fx=_FX_GOLDEN)
+
+        async def run_variant():
+            await plugin._process_feed_signals(variant, ["100000001"], BEIJING)  # noqa: SLF001
+            while plugin._inflight:  # 等待 background 管线完成
+                await asyncio.sleep(0.01)
+            return [b for _, b in plugin._ctx.send.sent_messages]
+
+        bodies = asyncio.run(asyncio.wait_for(run_variant(), 10))
+        assert len(bodies) == 1, f"variant {i} 应 A-primary 发送"
+        if expected_observed:
+            # source=operator-observed → observed=True → 确认型 primary
+            assert bodies[0].startswith("✅ Codex 额度重置已确认生效"), f"variant {i}"
+        else:
+            assert "已宣告" in bodies[0], f"variant {i} 应为 declaration 形态"

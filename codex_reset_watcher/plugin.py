@@ -72,7 +72,7 @@ v0.1.7 Tweet Content Provider（L4 展示层 enrichment）：
   forecast summary → 无正文），**绝不因 enrichment 失败而漏报**；
 - 仅在至少一个群待发送该 alert 时才请求 provider（全部群已去重则
   零请求）；同轮多群只取一次，复用同一内容；
-- 时间预算：单 provider 2.0s、最多两个 provider（≈4s 上限），无重试
+- 时间预算：单 provider 10.0s、最多两个 provider（≈20s 上限），无重试
   无退避；providers 为公开无鉴权只读 GET（FxTwitter/VxTwitter 公共
   API），不接 X Developer API/登录 cookie/internal GraphQL/proxy；
 - 内容结果模型 TweetContent(text, source, completeness)：
@@ -122,21 +122,20 @@ v0.1.8 LLM 解读（quality-first 展示层 enrichment）：
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
-from contextlib import suppress
-from datetime import datetime, timedelta, timezone
 import json
 import logging
 import math
-from pathlib import Path
 import time
+from collections.abc import Mapping
+from contextlib import suppress
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import aiohttp
-from pydantic import field_validator
-
 from maibot_sdk import Field, MaiBotPlugin, PluginConfigBase
+from pydantic import field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +148,7 @@ FEED_TIMEOUT_SECONDS = 12
 UPSTREAM_ALERT_KEY_PREFIX = "upstream-alert:"
 
 # ===== Tweet Content Provider（v0.1.7，L4 展示层 enrichment）=====
-# 公开无鉴权只读 GET；单 provider 2.0s 预算、最多两级（≈4s 上限），
+# 公开无鉴权只读 GET；单 provider 10.0s 预算、最多两级（≈20s 上限），
 # 失败即降级（fxtwitter → vxtwitter → feed → forecast），绝不阻塞告警。
 # 单 provider 10.0s：quality-first（慢 provider 优于截断摘要）；
 # 双 provider 最坏 ≈20s，仍远小于告警稀有度允许的延迟。
@@ -772,6 +771,8 @@ class FeedSignal:
         observation_result: str | None = None,
         source: str | None = None,
         observed_at: str | None = None,
+        tweet_at: str | None = None,
+        explicit_reset_claim: bool | None = None,
     ) -> None:
         self.key = key
         self.lane = lane  # "banked" | "global_declared"
@@ -788,6 +789,77 @@ class FeedSignal:
         self.observation_result = observation_result
         self.source = source
         self.observed_at = observed_at
+        # duplicate fingerprint / LLM published_at 依据（发帖时刻，
+        # 非 observed/announced 时刻）：来自 matching tweet.at。
+        self.tweet_at = tweet_at
+        self.explicit_reset_claim = explicit_reset_claim
+
+
+def is_observed_declaration(
+    observation_result: Any, source: Any, observed_at: Any
+) -> bool:
+    """结构化 observed 证据（纯函数）：三选一即成立。
+
+    observation_result=="reset_observed"（上游观测回写）、
+    source=="operator-observed"（运营观测回写）、
+    observed_at 非空（观测时刻存在）。
+    缺失/未知 → False（保守：走 A-primary，不静默）。
+    """
+    return (
+        str(observation_result or "").strip() == "reset_observed"
+        or str(source or "").strip() == "operator-observed"
+        or bool(str(observed_at or "").strip())
+    )
+
+
+def is_duplicate_live_confirmation(
+    *,
+    source: Any,
+    explicit_reset_claim: Any,
+    announced_at: datetime | None,
+    tweet_at: datetime | None,
+    l4_already: bool,
+) -> bool:
+    """duplicate 指纹（纯函数）：同 tweet 已被 L4 通知，且本事件是
+    「live 确认推文」而非回写观测——完整指纹需全部成立，任一缺失即
+    不算重复（保守：A-primary，宁可多发不漏报）。
+
+    - source=="live"（实时雷达摄入，非 operator 回写）
+    - explicit_reset_claim is True（发帖即明确宣告）
+    - announced_at 解析后 == tweet.at（宣告时刻 == 发帖时刻，
+      observed 回写场景二者必然分离）
+    - l4_already（该群已收到同 tweet 的 L4 receipt）
+    """
+    if not l4_already:
+        return False
+    if (str(source or "").strip() != "live"
+            or explicit_reset_claim is not True):
+        return False
+    announced = announced_at if isinstance(announced_at, datetime) else _parse_iso(announced_at)
+    posted = tweet_at if isinstance(tweet_at, datetime) else _parse_iso(tweet_at)
+    return not (announced is None or posted is None or announced != posted)
+
+
+def classify_declared_signal(
+    *,
+    observed: bool,
+    l4_already: bool,
+    duplicate_confirmation: bool,
+) -> str:
+    """declared 事件的三级分类（纯函数，生产 dispatch 与 replay 共用）。
+
+    返回 "A_PRIMARY" / "B_CONFIRM" / "C_SILENCE"：
+    - observed（正证据）→ 该群已收 L4 则 B_CONFIRM 短确认，否则
+      A_PRIMARY 完整首条通知；
+    - 非 observed 仅当 duplicate 指纹完整成立时 C_SILENCE（正证据
+      静默：同 confirmation 已被 L4 通知且 feed 只是晚归档）；
+    - 其余一切未知/缺字段场景 → A_PRIMARY（宁可多发不漏报）。
+    """
+    if observed:
+        return "B_CONFIRM" if l4_already else "A_PRIMARY"
+    if duplicate_confirmation:
+        return "C_SILENCE"
+    return "A_PRIMARY"
 
 
 def signals_from_feed(payload: Any, *, baseline: bool = False) -> list[FeedSignal]:
@@ -909,6 +981,14 @@ def signals_from_feed(payload: Any, *, baseline: bool = False) -> list[FeedSigna
                         observed_at=(
                             str(event.get("observed_at") or "").strip() or None
                         ),
+                        tweet_at=(
+                            str((tweet or {}).get("at") or "").strip() or None
+                        ),
+                        explicit_reset_claim=(
+                            tweet.get("explicit_reset_claim")
+                            if isinstance((tweet or {}).get("explicit_reset_claim"), bool)
+                            else None
+                        ),
                     )
                 )
     return signals
@@ -964,15 +1044,28 @@ def build_declared_message(
     body_text: str | None = None,
     completeness: str | None = None,
     ai_block: str | None = None,
+    observed: bool = False,
 ) -> str:
     """A-primary 完整通知（v0.1.9）：L1 为用户的 primary notification 时，
     复用 v0.1.8 的 enrichment 语义——provider 全文（原文/摘录措辞）与
-    AI 解读块；body 缺失时回退 feed 摘要行。"""
-    lines = [
-        f"📢 Global Reset 已宣告{_signal_header(signal, beijing)}",
-        "Tibo 已公开宣告为全体付费用户重置额度；到账存在传播延迟，以账户实际额度为准。",
-        f"重置原因：{signal.reason}",
-    ]
+    AI 解读块；body 缺失时回退 feed 摘要行。
+
+    observed=True（operator observed 回写）→ 确认型标题「已确认生效」+
+    「确认时间」（observed_at 转北京时间，不可解析则省略），不再声称
+    「Tibo 已公开宣告」——事实只是 operator observation。"""
+    if observed:
+        lines = ["✅ Codex 额度重置已确认生效"]
+        observed_dt = _parse_iso(signal.observed_at or "")
+        if observed_dt is not None:
+            lines.append(
+                f"确认时间：北京时间 {_format_title(observed_dt.astimezone(ZoneInfo('Asia/Shanghai')))}"
+            )
+    else:
+        lines = [
+            f"📢 Global Reset 已宣告{_signal_header(signal, beijing)}",
+            "Tibo 已公开宣告为全体付费用户重置额度；到账存在传播延迟，以账户实际额度为准。",
+            f"重置原因：{signal.reason}",
+        ]
     if body_text:
         display = _cap_text(body_text)
         lines.append("")
@@ -1312,7 +1405,8 @@ class CodexResetWatcher(MaiBotPlugin):
         self._state_lock = asyncio.Lock()
         # L4 inflight 表：alert_event_id -> pipeline task（内存态，重启丢失=
         # 重新处理，安全）；LLM 并发闸门：Reset 告警极稀有，串行即可。
-        self._inflight: dict[str, asyncio.Task[None]] = {}
+        # inflight 值为结构化元数据：{task, kind(l4|l1), tweet_id, groups}
+        self._inflight: dict[str, dict[str, Any]] = {}
         self._llm_semaphore = asyncio.Semaphore(1)
 
     async def on_load(self) -> None:
@@ -1374,14 +1468,14 @@ class CodexResetWatcher(MaiBotPlugin):
           新任务，其引用由管线自身 finally 精确 pop，本方法不触碰
           （无条件 clear 会抹掉新任务的注册，形成 orphan）。
         """
-        tasks = list(self._inflight.values())
+        tasks = [entry["task"] for entry in self._inflight.values()]
         if not tasks:
             return
-        for task in tasks:
-            task.cancel()
+        for entry in self._inflight.values():
+            entry["task"].cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         for key in list(self._inflight.keys()):
-            if self._inflight[key] in tasks:
+            if self._inflight[key]["task"] in tasks:
                 del self._inflight[key]
 
     async def on_config_update(self, scope: str, config_data: dict, version: str) -> None:
@@ -1538,10 +1632,13 @@ class CodexResetWatcher(MaiBotPlugin):
         if not groups:
             return
         beijing = self._target_zone()
+        # v0.1.9 顺序：先 forecast+L4（告警/确认 receipt 优先落盘），
+        # 再处理 Feed L1/L2（可基于 receipt 与同 tweet 在途状态做 defer），
+        # 最后 Tibo L3。
         feed = await self._fetch_feed()
-        await self._process_feed_signals(feed, groups, beijing)
         forecast = await self._fetch_forecast()
         await self._process_upstream_alert(forecast, groups, feed)
+        await self._process_feed_signals(feed, groups, beijing, forecast)
         conclusion = await self._fetch_conclusion(feed)
         if conclusion is None:
             return
@@ -1687,7 +1784,8 @@ class CodexResetWatcher(MaiBotPlugin):
         return "未说明"
 
     async def _process_feed_signals(
-        self, feed: Any, groups: list[str], beijing: ZoneInfo
+        self, feed: Any, groups: list[str], beijing: ZoneInfo,
+        forecast: Any = None,
     ) -> None:
         """feed 主源车道：每群独立 baseline 与去重（per-group receipt）。
 
@@ -1750,7 +1848,12 @@ class CodexResetWatcher(MaiBotPlugin):
             if signal.lane != "banked":
                 # v0.1.9 Confirmation Lane：declared 信号按群四格决策
                 # （A-primary / B-confirm / C-silence，见 _dispatch_declared_signal）。
-                await self._dispatch_declared_signal(signal, new_for, feed, beijing)
+                osig = forecast.get("official_signal") if isinstance(forecast, dict) else None
+                osig = osig if isinstance(osig, dict) else {}
+                osig_tweet_id = str(osig.get("tweet_id") or "").strip()
+                await self._dispatch_declared_signal(
+                    signal, new_for, feed, beijing, osig_tweet_id
+                )
                 continue
             message = build_banked_message(signal, beijing)
             age_ok = signal.announced_at is not None and (
@@ -1800,6 +1903,9 @@ class CodexResetWatcher(MaiBotPlugin):
         key = f"{UPSTREAM_ALERT_KEY_PREFIX}{alert_event_id}"
         if key in self._inflight:
             return
+        osig = forecast.get("official_signal") if isinstance(forecast, dict) else None
+        osig = osig if isinstance(osig, dict) else {}
+        osig_tweet_id = str(osig.get("tweet_id") or "").strip()
         pending: list[str] = []
         for group_id in groups:
             entry = self._group_state(group_id)
@@ -1808,11 +1914,15 @@ class CodexResetWatcher(MaiBotPlugin):
                 pending.append(group_id)
         if not pending:
             return
-        osig = forecast.get("official_signal") or {}
-        self._inflight[key] = asyncio.create_task(
-            self._alert_pipeline(key, osig, feed, pending),
-            name=f"codex-alert-{alert_event_id}",
-        )
+        self._inflight[key] = {
+            "task": asyncio.create_task(
+                self._alert_pipeline(key, osig, feed, pending),
+                name=f"codex-alert-{alert_event_id}",
+            ),
+            "kind": "l4",
+            "tweet_id": osig_tweet_id,
+            "groups": list(pending),
+        }
 
     async def _alert_pipeline(
         self, key: str, osig: dict[str, Any], feed: Any, pending: list[str]
@@ -1993,7 +2103,7 @@ class CodexResetWatcher(MaiBotPlugin):
 
         - 只在至少一个群待发送时被调用（见 _process_upstream_alert）；
         - 任何失败/超时/JSON 异常都降级到下一级，绝不抛出、绝不阻塞告警；
-        - 时间预算：单 provider 2.0s、最多两个 provider（≈4s 上限），
+        - 时间预算：单 provider 10.0s、最多两个 provider（≈20s 上限），
           无重试、无退避；
         - 本方法只影响文案，不参与触发/去重/receipt/重试判定；
         - TweetContent.text 始终为 provider/来源的完整正文（不在内容层裁剪）。
@@ -2100,30 +2210,31 @@ class CodexResetWatcher(MaiBotPlugin):
             self._save_state()
 
     async def _dispatch_declared_signal(
-        self, signal: FeedSignal, new_for: list[str], feed: Any, beijing: ZoneInfo
+        self, signal: FeedSignal, new_for: list[str], feed: Any,
+        beijing: ZoneInfo, osig_tweet_id: str = "",
     ) -> None:
-        """v0.1.9 Confirmation Lane：declared 信号的 per-group 四格决策。
+        """v0.1.9 Confirmation Lane：declared 信号的 per-group 三级决策。
 
-        判定（纯结构化，无 NLP / 无跨 tweet lifecycle 推断）：
-          observed = observation_result=="reset_observed" ∨ source==
-                     "operator-observed" ∨ observed_at 非空
-          l4_already = 该群 upstream_alert_keys 中存在含当前 tweet_id 的
-                     receipt（per-group，不读其他群）
-        矩阵：
-          observed ∧ l4_already → B-confirm（短确认，零 provider/LLM）
-          observed ∧ ¬l4_already → A-primary（完整 enrichment，用户首条通知）
-          ¬observed ∧ l4_already → C-silence（确定性抑制 → 落 handled key）
-          ¬observed ∧ ¬l4_already → A-primary
-        - A-primary：同 event 多个 A 群时 Content+LLM 只执行一次并复用；
-        - B：send success → 写 key；失败不写，下一轮重试；
-        - C：确定性决策 → 立即落 handled key（与 age-guard「跳过并记录」
-          同语义、同 notified_keys 命名空间，无 STATE_VERSION 变化）；
-        - age-guard（≤48h）沿用：B/A 记录不发送；C 已记录不重复。
+        判定（纯结构化，无 NLP / 无跨 tweet lifecycle 推断；分类器为
+        classify_declared_signal，生产与 replay 共用同一实现）：
+          observed（正证据）= observation_result=="reset_observed" ∨
+                     source=="operator-observed" ∨ observed_at 非空；
+          duplicate（正证据）= 该群已收同 tweet L4 receipt ∧ source=="live"
+                     ∧ explicit_reset_claim is True ∧ announced_at==tweet.at；
+        observed → B_CONFIRM（该群已收 L4）/ A_PRIMARY（未收）；
+        ¬observed ∧ duplicate → C_SILENCE；
+        其余一切未知/缺字段 → A_PRIMARY（静默需要正证据）。
+
+        瞬态 defer（防同轮 L4/L1 双发）：同 tweet 的 official_signal 仍在，
+        或同 tweet 的 L4 pipeline 在途且该群在其 pending 中、receipt 未落 →
+        本轮跳过（不发、不写任何 key）；下一轮 receipt 落地 → B/C，或上游
+        清除信号且仍无 receipt → 保守接管 A_PRIMARY。
+
+        A-primary 为长耗时管线（Content+LLM）：以 l1-primary:{key} 注册
+        inflight 后台执行，poller 不阻塞；同 key 未完成不重复启动。
         """
-        observed = (
-            signal.observation_result == "reset_observed"
-            or signal.source == "operator-observed"
-            or bool(signal.observed_at)
+        observed = is_observed_declaration(
+            signal.observation_result, signal.source, signal.observed_at,
         )
         now = _utcnow()
         age_ok = signal.announced_at is not None and (
@@ -2132,24 +2243,53 @@ class CodexResetWatcher(MaiBotPlugin):
         b_groups: list[str] = []
         a_groups: list[str] = []
         c_groups: list[str] = []
+        deferred: list[str] = []
         for group_id in new_for:
             l4_already = self._group_l4_alerted(group_id, signal.event_id)
-            if observed:
-                # 已观测事实：该群已收到 L4 → 短确认；未收到 → 全量首条通知
-                (b_groups if l4_already else a_groups).append(group_id)
+            if l4_already:
+                duplicate = is_duplicate_live_confirmation(
+                    source=signal.source,
+                    explicit_reset_claim=signal.explicit_reset_claim,
+                    announced_at=signal.announced_at,
+                    tweet_at=signal.tweet_at,
+                    l4_already=True,
+                )
+                decision = classify_declared_signal(
+                    observed=observed,
+                    l4_already=True,
+                    duplicate_confirmation=duplicate,
+                )
+            elif (
+                (osig_tweet_id and osig_tweet_id == signal.event_id)
+                or self._l4_inflight_same_tweet(signal.event_id, group_id)
+            ):
+                deferred.append(group_id)
+                continue
             else:
-                # 非 observed：该群已收到 L4 → feed 只是晚归档，抑制；
-                # 未收到 → 全量首条通知
-                (c_groups if l4_already else a_groups).append(group_id)
+                decision = "A_PRIMARY"
+            if decision == "A_PRIMARY":
+                a_groups.append(group_id)
+            elif decision == "B_CONFIRM":
+                b_groups.append(group_id)
+            else:
+                c_groups.append(group_id)
+        if deferred:
+            logger.info(
+                "L1 同 tweet alert 在途/有效，本轮 defer（群：%s）：%s",
+                "、".join(deferred),
+                signal.key,
+            )
         if c_groups:
             logger.info(
-                "L1 确认事件已被 L4 覆盖（同 tweet），静默并记录：%s", signal.key
+                "L1 确认事件已被 L4 覆盖（同 tweet），静默并记录：%s", signal.key,
             )
             for group_id in c_groups:
                 await self._record_declared_key(group_id, signal.key)
         if not age_ok:
             logger.info(
-                "Feed 信号超过 %d 小时，跳过并记录：%s", MAX_SIGNAL_AGE_HOURS, signal.key
+                "Feed 信号超过 %d 小时，跳过并记录：%s",
+                MAX_SIGNAL_AGE_HOURS,
+                signal.key,
             )
             for group_id in b_groups + a_groups:
                 await self._record_declared_key(group_id, signal.key)
@@ -2161,13 +2301,51 @@ class CodexResetWatcher(MaiBotPlugin):
                     logger.info("Feed 通知已发送：群 %s %s", group_id, signal.key)
                     await self._record_declared_key(group_id, signal.key)
         if a_groups:
-            content = await self._enrich_content(
-                signal.event_id, signal.summary, feed
+            l1_key = f"l1-primary:{signal.key}"
+            if l1_key in self._inflight:
+                logger.info("L1 primary 管线已在途，本轮跳过：%s", l1_key)
+                return
+            self._inflight[l1_key] = {
+                "task": asyncio.create_task(
+                    self._l1_primary_pipeline(signal, feed, a_groups, beijing),
+                    name=f"codex-l1-{signal.event_id}",
+                ),
+                "kind": "l1",
+                "tweet_id": signal.event_id,
+                "groups": list(a_groups),
+            }
+
+    def _l4_inflight_same_tweet(self, tweet_id: str, group_id: str) -> bool:
+        """是否存在同 tweet 的 L4 pipeline 在途，且该群在其 pending 中。"""
+        for entry in self._inflight.values():
+            if (
+                entry.get("kind") == "l4"
+                and entry.get("tweet_id") == tweet_id
+                and group_id in (entry.get("groups") or [])
+            ):
+                return True
+        return False
+
+    async def _l1_primary_pipeline(
+        self, signal: FeedSignal, feed: Any, groups: list[str], beijing: ZoneInfo
+    ) -> None:
+        """L1 A-primary 后台管线（v0.1.9）：Content Provider →（可选）LLM →
+        observed/declaration formatter → 逐群发送 + receipt。
+
+        - 顶层完整异常回收；finally 清 inflight；
+        - 逐群发送前实时重查 stale group（config 热更新删除即跳过）；
+        - send 成功才写该群 receipt；state mutation 走 _state_lock。
+        """
+        l1_key = f"l1-primary:{signal.key}"
+        try:
+            observed = is_observed_declaration(
+                signal.observation_result, signal.source, signal.observed_at,
             )
+            content = await self._enrich_content(signal.event_id, signal.summary, feed)
             ai_block = await self._llm_analyze_content(
                 signal.event_id,
                 signal.url,
-                signal.announced_at.isoformat() if signal.announced_at else "",
+                signal.tweet_at or "unknown",
                 content,
             )
             message = build_declared_message(
@@ -2176,11 +2354,20 @@ class CodexResetWatcher(MaiBotPlugin):
                 content.text if content is not None else None,
                 content.completeness if content is not None else None,
                 ai_block,
+                observed=observed,
             )
-            for group_id in a_groups:
+            current = set(self._target_groups())
+            for group_id in groups:
+                if group_id not in current:
+                    logger.info("L1 primary 跳过已移除群：%s", group_id)
+                    continue
                 if await self._send_group_text(group_id, message):
                     logger.info("Feed 通知已发送：群 %s %s", group_id, signal.key)
                     await self._record_declared_key(group_id, signal.key)
+        except Exception:
+            logger.exception("L1 primary 管线异常：%s", l1_key)
+        finally:
+            self._inflight.pop(l1_key, None)
 
     def _clear_active_plan(self) -> None:
         """终止状态清除全部群的 active plan（上游结论对所有群一致），
