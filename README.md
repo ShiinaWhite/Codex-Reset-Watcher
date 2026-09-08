@@ -1,89 +1,92 @@
-# Codex Reset Watcher
+# Codex Reset Watcher（Codex 额度重置提醒）
 
-面向 MaiBot 的 QQ 群通知插件，监控 Codex 全局额度重置与 Banked Reset 生命周期。
-当前版本 **0.1.9 release candidate**，审核分支为 `review/v0.1.9`。
-此仓库描述候选版本，不代表该版本已经部署或通过线上验收。
+这是一个 MaiBot 插件，自动盯守 OpenAI Codex 的额度重置动态，并把提醒发到你指定的 QQ 群里。
 
-## 通知行为
+- 当前版本：**0.1.9**
+- 运行环境：MaiBot（Host 1.0.0 – 1.2.99，SDK 2.8.0 – 2.99.99，以插件清单声明为准）
+- 许可证：MIT
 
-| 数据入口 | 用途 |
+## 它是做什么的
+
+插件定期查询公开的 Codex 重置信息网站，发现值得注意的动态时在群里发一条通知。它不登录你的 OpenAI 账号，也不触碰你的额度，只读取公开数据：
+
+| 它盯什么 | 你会收到什么提醒 |
 | --- | --- |
-| `codex-reset.com/api/feed` | Banked 生命周期，以及 Global Reset 宣告与确认事件 |
-| `codex-reset.com/api/forecast` 的 `official_signal` | 镜像上游面向用户的告警，按 `alert_event_id` 去重 |
-| Tibo `/api/reset/current` | 已安排重置的精确时间、时间更新或近似时间预告 |
+| Codex 全局额度重置 | 官方宣布的全局重置消息，以及随后确认生效的消息 |
+| Banked Reset（存入额度） | 重置机会存进账户时的提醒，之后由你手动兑换 |
+| 上游官方告警 | 信息站转发给用户的预警，同一件事只提醒一次 |
+| 已安排的重置时间 | 精确的重置时间点，时间有调整时也会更新提醒 |
 
-语义判定使用结构化字段；不根据原文猜测重置、不新增概率判定。
-Tweet 内容补全与可选 LLM 解读用于通知展示，不决定是否触发告警。
-Banked Reset 通知指额度重置机会存入账户、供之后手动兑换，不表示当前额度自动刷新。
+通知内容以数据源提供的结构化信息为准，不会凭原文猜测，时间默认按北京时间显示。
 
-L1 确认事件按群判断：已有同 Tweet 的 L4 receipt 时，observed 事件发送短确认；
-符合重复确认指纹的事件静默并记录已处理。没有对应 receipt 时走完整首条通知。
-同 Tweet 的有效 L4 告警或该群在途任务会暂缓 L1；完整通知在发送前再次按群检查 receipt。
-已有 alert 去重键的群可以从有效上游信号的显式 `tweet_id` 静默补齐结构化 receipt。
+## Banked Reset 是什么
 
-## 配置与运行环境
+Banked Reset **不是额度立刻刷新**，而是把「一次重置机会」存进你的账户，什么时候用由你自己决定。收到 Banked 提醒，意思是「你账户里多了一次可用的重置机会」；具体的兑换操作仍需你在 OpenAI 侧手动进行。
 
-插件清单声明 MaiBot Host `1.0.0–1.2.99`、SDK `2.8.0–2.99.99`；
-这些是清单声明范围，不是所有版本的实测兼容承诺。
-将 `codex_reset_watcher/` 交给 MaiBot 插件加载器后，在 WebUI 配置通知群。
-完整默认值见 [config.toml](codex_reset_watcher/config.toml)。
+## 安装
+
+1. 下载或克隆本仓库；
+2. 把 `codex_reset_watcher/` 文件夹放进 MaiBot 的插件目录，由插件加载器加载；
+3. 在 MaiBot WebUI 中打开本插件的配置页，把要提醒的群号填入 `group_ids`。
+
+不需要申请 OpenAI API key，也不需要 X（Twitter）API key。
+
+## 配置群与常用选项
+
+配置都在 WebUI 里完成，不需要手动编辑文件。常用项如下：
 
 ```toml
 [watcher]
-group_ids = ["100000001"]
-check_interval = 240
+group_ids = []            # 要提醒的群号列表，例如 ["100000001"]
+check_interval = 240      # 每隔多少秒检查一次，默认 240（4 分钟）
 timezone = "Asia/Shanghai"
-tibo_base = "https://tibo.modelyard.dev"
-codex_base = "https://codex-reset.com"
 
 [llm]
-enabled = true
-model_task = "replyer"
+enabled = true            # AI 解读开关
+model_task = "replyer"    # 复用 MaiBot 的哪个模型任务
 ```
 
-每群独立去重与重试；旧 `group_id` 通过内部迁移字段转为 `group_ids`。
-状态保存在 SDK 提供的数据目录下的 `reset_state.json`（状态格式 version 6），
-由插件管理，包含逐群通知记录、alert 键和结构化 Tweet receipt。
+完整默认值见 [config.toml](codex_reset_watcher/config.toml)。
 
-## 离线测试
+### 多群支持
 
-测试使用 fake Host context 和仓库内 fixture；不启动插件轮询服务、不发送真实 QQ 消息。
-候选版本验证环境为 Python 3.13.3、MaiBot SDK 2.8.0、pytest 9.0.3、
-aiohttp 3.13.5、pydantic 2.13.3、tzdata 2026.1。
-SDK 来自已有 MaiBot 环境；仓库不携带 SDK，缺少 `maibot_sdk` 时无法收集测试。
-应选择已经安装这些依赖的 Python 解释器，或先按 MaiBot 的方式准备 SDK 环境。
+`group_ids` 里可以填任意多个群。每个群独立发送、独立去重、独立重试：一个群发送失败不影响其他群，同一条提醒也不会在同一群里重复出现。
 
-在仓库根目录执行完整测试，不使用 `-k` 过滤：
+## AI 解读是什么
 
-```bash
-python -m pytest -q
-```
+开启 AI 解读后，插件会让 MaiBot 自带的大模型把通知原文翻译成中文、提炼一句重点、整理出关键信息（重置类型、影响范围、时间等），群里的人不用自己啃英文原文。
 
-当前套件 **188 项**：`test_watcher.py` 覆盖通知、状态、Provider、LLM、并发和补写；
-`test_replay_corpus.py` 使用历史公开 API corpus 验证确认策略。
-midflight 用例通过事件屏障确认 Provider 已挂起，随后注入并持久化 receipt，
-验证 B-confirm / C-silence，以及混合群中的未注入群仍走完整通知。
-backfill 用例覆盖升级、后补 Tweet ID、持久化、幂等、缺字段和无效契约。
-`live/` 中的历史输出文件是归档材料，不是当前测试结果。
+- AI 解读只是让通知更好读，**失败或超时会自动降级为普通通知**，不影响提醒本身；
+- 它复用 MaiBot 已有的模型任务（默认 `replyer`），**不需要单独的 OpenAI 或 X API key**；
+- 不想用的话，在 WebUI 里把 `llm.enabled` 关掉即可。
 
-## 发布候选的唯一事实源
+## 常见问题
 
-以 GitHub `review/v0.1.9` 的 **exact commit SHA** 为准。
-本地工作区、导出目录和历史补丁脚本均不能覆盖远端基线；变更必须形成新提交并重新验证。
-记录提交 SHA、Git tree OID、完整 pytest 结果和跟踪文件的 SHA-256 清单。
+**同一件事会重复提醒吗？**
+每个群都有独立的通知记录，同一条告警、同一次确认在一个群里只发一次；重置时间发生实质调整时会作为新的提醒发出。
 
-```bash
-git -c core.autocrlf=false clone --single-branch --branch review/v0.1.9 https://github.com/ShiinaWhite/Codex-Reset-Watcher.git rc-check
-cd rc-check
-git checkout --detach <EXACT_SHA>
-python -m pytest -q
-python tools/verify_release.py <EXACT_SHA>
-```
+**为什么提醒时间是北京时间？**
+默认时区是 `Asia/Shanghai`，可在配置中修改。
 
-验证脚本要求干净 checkout，并逐文件比较磁盘原始字节和提交中的 blob，检查重复测试定义。
-聚合 SHA-256 的输入是按路径排序的 `[path, git_mode, file_sha256]` 数组，
-以 UTF-8 编码、无额外空格的 JSON 序列化。Git tree OID 单独报告，不能与 SHA-256 字符串混为一谈。
-本地 canonical checkout、clean clone 与远端 exact commit 的 blob 清单必须得到相同聚合 SHA-256。
+**重启后会漏提醒或重复播报吗？**
+插件把已发送的通知记录保存在 MaiBot 数据目录的 `reset_state.json` 里，重启后继续按记录去重，不会把老消息重新播一遍；某次发送失败会按群重试。
 
-业务代码在 [plugin.py](codex_reset_watcher/plugin.py)，清单在 [_manifest.json](codex_reset_watcher/_manifest.json)，
-项目许可证见 [LICENSE](LICENSE)。
+**通知太频繁怎么办？**
+调大 `check_interval`（单位：秒）可以降低检查频率。没有新事件时插件不会发任何消息。
+
+**AI 解读的翻译不准？**
+AI 解读由大模型生成，仅供参考，通知中始终保留原始信息；解读失败时自动降级为普通通知。
+
+**从旧版本升级会丢配置吗？**
+不会。旧的单群配置（`group_id`）会自动迁移到多群列表 `group_ids`，无需手动处理。
+
+## 版本与兼容性
+
+- 当前版本 **0.1.9**；
+- 插件清单声明的兼容范围为 MaiBot Host `1.0.0 – 1.2.99`、SDK `2.8.0 – 2.99.99`。这是清单声明范围，不代表所有中间版本都经过实测；在你的环境遇到问题欢迎提 Issue。
+
+## 问题反馈与许可
+
+- 有问题或建议请到 [Issues](https://github.com/ShiinaWhite/Codex-Reset-Watcher/issues) 反馈；
+- 项目以 [MIT](LICENSE) 协议开源；
+- 主要代码在 [plugin.py](codex_reset_watcher/plugin.py)，插件清单在 [_manifest.json](codex_reset_watcher/_manifest.json)。
