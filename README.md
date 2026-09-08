@@ -28,7 +28,7 @@ Banked Reset 通知必须声明：存入账户供之后**手动兑换**，不代
 | `codex_reset_watcher/plugin.py` | 插件主体（唯一业务代码） |
 | `codex_reset_watcher/_manifest.json` | 插件清单（id `codex-reset.watcher`，v0.1.8） |
 | `codex_reset_watcher/config.toml` | 默认配置样例 |
-| `test_watcher.py` | pytest（168 项，真实 fixture 优先） |
+| `test_watcher.py` | pytest（175 项，含 7 项 Historical Replay 门禁，真实 fixture 优先） |
 | `probe_*.json` / `live/*.json` | 真实 API 样本（公开接口响应） |
 | `live/forensic_0908/replay/` | Historical Replay：7 个真实 Reset lifecycle corpus + 离线策略模拟（pytest 门禁 `test_replay_corpus.py`） |
 

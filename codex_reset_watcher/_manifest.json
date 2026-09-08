@@ -1,7 +1,7 @@
 {
   "author": {
     "name": "Codex Reset Watcher",
-    "url": "https://github.com/"
+    "url": "https://github.com/ShiinaWhite/Codex-Reset-Watcher"
   },
   "capabilities": [
     "chat.get_stream_by_group_id",
