@@ -1925,6 +1925,28 @@ class CodexResetWatcher(MaiBotPlugin):
         osig = forecast.get("official_signal") if isinstance(forecast, dict) else None
         osig = osig if isinstance(osig, dict) else {}
         osig_tweet_id = str(osig.get("tweet_id") or "").strip()
+
+        # backfill（v0.1.9 修正）：已 dedup 的群如缺结构化 tweet receipt，
+        # 静默补齐（0 QQ / 0 Provider / 0 LLM）。解决：
+        # 1) v0.1.8 → v0.1.9 state 升级时已有 alert key、无 tweet receipt；
+        # 2) L4 首次发送时 tweet_id 缺失，后续同 alert 原位补出 tweet_id。
+        if osig_tweet_id:
+            async with self._state_lock:
+                dirty = False
+                for group_id in groups:
+                    entry = self._group_state(group_id)
+                    seen_keys = set(entry.get("upstream_alert_keys") or [])
+                    seen_tweets = set(
+                        entry.get("upstream_alert_tweet_ids") or []
+                    )
+                    if key in seen_keys and osig_tweet_id not in seen_tweets:
+                        entry["upstream_alert_tweet_ids"] = sorted(
+                            seen_tweets | {osig_tweet_id}
+                        )
+                        dirty = True
+                if dirty:
+                    self._save_state()
+
         pending: list[str] = []
         for group_id in groups:
             entry = self._group_state(group_id)

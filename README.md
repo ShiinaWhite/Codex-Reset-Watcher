@@ -51,9 +51,6 @@ tibo_base = "https://tibo.modelyard.dev"
 codex_base = "https://codex-reset.com"
 ```
 
-生产插件统一部署于 `/srv/maibot/plugins`（persistent RW bind，唯一运行真源），
-发布归档与发布/回滚流程见 `docs/operations.md`。
-
 ## 状态文件
 
 `<plugin-data>/codex-reset.watcher/reset_state.json`（0.1.3 起 `version: 6`）：
