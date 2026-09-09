@@ -888,6 +888,23 @@ def _fixed_now() -> datetime:
     return datetime(2026, 9, 5, 2, 0, tzinfo=timezone.utc)
 
 
+def _confirmation_fixed_now() -> datetime:
+    # confirmation_cycle_landed.json（2026-09-08）的同窗口：晚于全部
+    # announced_at（01:34Z~04:05Z）、在 48h 护栏之内，使 A/B 路径可发送。
+    # 消除确认车道 fixture 测试对真实墙钟的日期漂移依赖（48h 时间炸弹）。
+    return datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture()
+def _confirmation_fixed_clock(monkeypatch):
+    """把 age-guard 的「当前时间」固定到 09-08 corpus 同窗口。
+
+    供全部直调 _process_feed_signals 且使用 09-08 确认车道 fixture 的
+    测试使用：这些测试此前读真实墙钟，日期推进超过 48h 后 A/B 路径会被
+    age-guard 静默，断言随之失败（且 C/defer 语义不受影响）。"""
+    monkeypatch.setattr(plugin_module, "_utcnow", _confirmation_fixed_now)
+
+
 def _wire_feed(
     plugin: CodexResetWatcher,
     feed: dict | None,
@@ -3581,6 +3598,7 @@ L4_RECEIPTS = [
 ]
 
 
+@pytest.mark.usefixtures("_confirmation_fixed_clock")
 def test_golden_0908_l1_1_observed_becomes_short_confirm(tmp_path):
     """黄金回归（09-08 L1#1）：promise tweet 被 operator 改写为 observed/
     announced，同群已有对应 L4 receipt → 只发 B-confirm 短确认，
@@ -3603,6 +3621,7 @@ def test_golden_0908_l1_1_observed_becomes_short_confirm(tmp_path):
     assert "global-declared:2097043464538264003" in _gstate(plugin)["notified_keys"]
 
 
+@pytest.mark.usefixtures("_confirmation_fixed_clock")
 def test_golden_0908_l1_2_confirmation_late_archive_is_silenced(tmp_path):
     """黄金回归（09-08 L1#2）：All reset for everyone 确认推文已被 L4+LLM
     通知（同群 receipt 在），feed 晚一步归档 → C-silence：0 QQ、0 Provider、
@@ -3627,6 +3646,7 @@ def test_golden_0908_l1_2_confirmation_late_archive_is_silenced(tmp_path):
     assert "global-declared:2097174560412246215" in _gstate(plugin)["notified_keys"]  # handled key
 
 
+@pytest.mark.usefixtures("_confirmation_fixed_clock")
 def test_mixed_groups_same_event_four_quadrant(tmp_path):
     """混合群（spec 6）：同一 observed event 与同一 confirmation event，
     群 A（已有 L4 receipt）→ B-confirm / C-silence；群 B（无 receipt）→
@@ -3676,6 +3696,7 @@ def test_mixed_groups_same_event_four_quadrant(tmp_path):
     ]
 
 
+@pytest.mark.usefixtures("_confirmation_fixed_clock")
 def test_confirmation_primary_uses_provider_full_text(tmp_path):
     """A-primary 复用 Content Provider：B 群（无 L4 receipt）的 declared
     通知带 FxTwitter 完整原文（原文措辞）与原帖。"""
@@ -3716,6 +3737,7 @@ def _event1_only_feed() -> dict:
     return feed
 
 
+@pytest.mark.usefixtures("_confirmation_fixed_clock")
 def test_same_round_l4_l1_defers_then_receipt_confirms(tmp_path):
     """同轮 same-tweet Feed+Forecast：L4 先行调度，L1 defer 不发送；
     receipt 落地后下一轮 → B-confirm 短确认。"""
@@ -3740,6 +3762,7 @@ def test_same_round_l4_l1_defers_then_receipt_confirms(tmp_path):
     assert "确认时间：北京时间 9月8日 09:34" in bodies[0]
 
 
+@pytest.mark.usefixtures("_confirmation_fixed_clock")
 def test_defer_released_when_forecast_clears(tmp_path):
     """defer 后上游清除 official_signal 且仍无 receipt → L1 保守接管
     A-primary（完整通知），不会永久 defer。"""
@@ -3761,6 +3784,7 @@ def test_defer_released_when_forecast_clears(tmp_path):
     assert "global-declared:2097043464538264003" in _gstate(plugin)["notified_keys"]
 
 
+@pytest.mark.usefixtures("_confirmation_fixed_clock")
 def test_per_group_defer_with_existing_receipt(tmp_path):
     """per-group defer：群 A 已有 L4 receipt（confirmation → C-silence），
     群 B 无 receipt → defer；osig 清除后 B 接管 A-primary；A 不重复。"""
@@ -3795,6 +3819,7 @@ def test_per_group_defer_with_existing_receipt(tmp_path):
     assert len(by_group2.get("qq-group-100000001", [])) == 0  # A 不重复
 
 
+@pytest.mark.usefixtures("_confirmation_fixed_clock")
 def test_duplicate_fingerprint_missing_field_takes_over(tmp_path):
     """spec 7：duplicate 指纹任一字段缺失/不一致 → 不得 C-silence，
     A-primary 照常发送（防 schema 漂移造成静默漏报）。"""
@@ -3848,6 +3873,7 @@ def test_duplicate_fingerprint_missing_field_takes_over(tmp_path):
 # ===== v0.1.9 修正轮：defer 契约门控 + 并发 receipt 注入回归 =====
 
 
+@pytest.mark.usefixtures("_confirmation_fixed_clock")
 def test_defer_contract_gating_invalid_delivery(tmp_path):
     """delivery != alerts → contract 不成立 → 不 defer，保守 A-primary。
     event1 是 observed → 确认型 primary（非 declaration）。"""
@@ -3862,6 +3888,7 @@ def test_defer_contract_gating_invalid_delivery(tmp_path):
     assert bodies[0].startswith(GLOBAL_CONFIRMED_TITLE)
 
 
+@pytest.mark.usefixtures("_confirmation_fixed_clock")
 def test_defer_contract_gating_missing_alert_event_id(tmp_path):
     """alert_event_id 非空字符串要求不满足 → contract 不成立 → 不 defer。"""
     plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
@@ -3875,6 +3902,7 @@ def test_defer_contract_gating_missing_alert_event_id(tmp_path):
     assert bodies[0].startswith(GLOBAL_CONFIRMED_TITLE)
 
 
+@pytest.mark.usefixtures("_confirmation_fixed_clock")
 def test_defer_contract_gating_valid_contract_defers(tmp_path):
     """正向对照：三项契约成立 → defer（不发不写）。"""
     plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
