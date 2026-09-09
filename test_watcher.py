@@ -25,9 +25,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import codex_reset_watcher.plugin as plugin_module  # noqa: E402
 from codex_reset_watcher.plugin import (  # noqa: E402
+    BANKED_NOTICE_TITLE,
+    CONTRACT_PROMPT,
     CodexResetWatcher,
     CodexResetWatcherConfig,
     Conclusion,
+    GLOBAL_CONFIRMED_TITLE,
+    GLOBAL_NOTICE_TITLE,
+    TRANSLATION_MAX_CHARS,
     _display_source,
     _display_tibo_status,
     _display_verification_status,
@@ -35,16 +40,12 @@ from codex_reset_watcher.plugin import (  # noqa: E402
     _format_tibo_observation_log,
     _parse_iso,
     _reason_from_tags,
-    _score_display,
     _status_id,
-    _window_display,
-    build_banked_message,
-    build_declared_message,
-    build_confirmed_message,
-    build_signal_message,
+    _validate_llm_translation,
     _content_from_provider_payload,
     _extract_json_object,
-    _validate_llm_analysis,
+    build_confirmed_message,
+    build_full_notice,
     conclusion_from_tibo_current,
     signals_from_feed,
     upstream_alert_event_id,
@@ -211,48 +212,20 @@ def _stage_payload(plugin: CodexResetWatcher, payload: dict, events: dict | None
 
 
 def test_full_lifecycle_through_production_path(tmp_path):
-    """SCHEDULED → DUE → CONFIRMING → TIME_CHANGED → CONFIRMED 完整生命周期，
-    全部经 _check_once 生产路径：
-
-    - SCHEDULED 09:00 → 发送"已确认"，active_plan = 09:00
-    - DUE（时间已到）→ 不发送，active_plan 仍为 09:00
-    - CONFIRMING → 不发送，active_plan 仍为 09:00
-    - TIME_CHANGED 10:00 → 发送"时间更新"，原计划 09:00 → 最新 10:00
-    - CONFIRMED → 不发送，active_plan 被清除（保留历史去重时间）
-    """
+    """v0.1.10 退役回归：SCHEDULED → DUE → CONFIRMING → TIME_CHANGED →
+    CONFIRMED 完整生命周期全部经 _check_once 生产路径，QQ 通知为 0——
+    Tibo /api/reset/current 用户侧退役（只读观察），独立重置预告/时间
+    更新不再出现；_maybe_notify 旧路径仅作死代码保留。"""
     plugin = _make_plugin(tmp_path)
     base = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-    t_sched = base + timedelta(hours=2)  # "09:00"
-    t_changed = base + timedelta(hours=4)  # "10:00"
+    t_sched = base + timedelta(hours=2)
+    t_changed = base + timedelta(hours=4)
     url = "https://x.com/thsottiaux/status/999"
 
-    # 1) SCHEDULED（未来准确计划）
     _stage_payload(plugin, _tibo_payload("SCHEDULED", t_sched.isoformat(), url))
-    assert len(plugin._ctx.send.sent_messages) == 1
-    assert plugin._ctx.send.sent_messages[0][1].startswith("Codex 额度重置已确认｜北京时间")
-    assert _gstate(plugin)["active_plan"]["reset_at"] == t_sched.isoformat()
-    assert _gstate(plugin)["active_plan"]["source_url"] == url
-
-    # 2) DUE：计划时间已到，等待确认 → 静默，且不清 active_plan
     _stage_payload(plugin, _tibo_payload("DUE", t_sched.isoformat(), url))
-    assert len(plugin._ctx.send.sent_messages) == 1
-    assert _gstate(plugin)["active_plan"]["reset_at"] == t_sched.isoformat()
-
-    # 3) CONFIRMING：正在确认 → 静默，且不清 active_plan
     _stage_payload(plugin, _tibo_payload("CONFIRMING", t_sched.isoformat(), url))
-    assert len(plugin._ctx.send.sent_messages) == 1
-    assert _gstate(plugin)["active_plan"]["reset_at"] == t_sched.isoformat()
-
-    # 4) TIME_CHANGED 10:00 → "时间更新"，原计划 09:00
     _stage_payload(plugin, _tibo_payload("TIME_CHANGED", t_changed.isoformat(), url))
-    assert len(plugin._ctx.send.sent_messages) == 2
-    body = plugin._ctx.send.sent_messages[1][1]
-    assert body.startswith("Codex 重置时间更新｜北京时间")
-    assert "原计划：北京时间" in body
-    assert "最新计划：北京时间" in body
-    assert _gstate(plugin)["active_plan"]["reset_at"] == t_changed.isoformat()
-
-    # 5) CONFIRMED（真实 sample shape：expectedResetAt=null + confirmation）
     confirmed = {
         "status": "CONFIRMED",
         "expectedResetAt": None,
@@ -266,9 +239,10 @@ def test_full_lifecycle_through_production_path(tmp_path):
                          "sourceUrl": url},
     }
     _stage_payload(plugin, confirmed)
-    assert len(plugin._ctx.send.sent_messages) == 2
+    assert plugin._ctx.send.sent_messages == []
+    # 用户侧退役：不写任何 Tibo 通知 receipt（旧字段仅由死代码路径写入）。
+    assert _gstate(plugin).get("last_notified_reset_at") is None
     assert _gstate(plugin).get("active_plan") is None
-    assert _gstate(plugin).get("last_notified_reset_at") == t_changed.isoformat()
 
 
 def test_due_confirming_future_time_still_silent(tmp_path):
@@ -286,23 +260,16 @@ def test_due_confirming_future_time_still_silent(tmp_path):
     assert _gstate(plugin)["active_plan"] is not None
 
 
-def test_no_source_time_changed_degrades_to_confirmed(tmp_path):
-    """任一侧缺真实 source URL 时，TIME_CHANGED 只能发"已确认"，不得引用
-    no-source 回退 ID 编造"原计划"。"""
+def test_no_source_time_changed_still_never_sends(tmp_path):
+    """v0.1.10：缺真实 source URL 的 TIME_CHANGED 同样不发任何 QQ 通知
+    （用户侧整体退役，不再有"已确认"退化发送）。"""
     plugin = _make_plugin(tmp_path)
     base = datetime.now(timezone.utc).replace(second=0, microsecond=0)
     t1 = base + timedelta(hours=2)
     t2 = base + timedelta(hours=4)
     _stage_payload(plugin, _tibo_payload("SCHEDULED", t1.isoformat(), source_url=""))
-    assert len(plugin._ctx.send.sent_messages) == 1
-    assert _gstate(plugin)["active_plan"]["reset_at"] == t1.isoformat()
-    assert _gstate(plugin)["active_plan"]["source_url"].startswith("no-source:")
     _stage_payload(plugin, _tibo_payload("TIME_CHANGED", t2.isoformat(), source_url=""))
-    bodies = [b for _, b in plugin._ctx.send.sent_messages]
-    assert len(bodies) == 2
-    assert bodies[1].startswith("Codex 额度重置已确认")
-    assert "原计划" not in bodies[1]
-    assert _gstate(plugin)["active_plan"]["reset_at"] == t2.isoformat()
+    assert plugin._ctx.send.sent_messages == []
 
 
 def test_feed_failure_degrades_reason_and_notifies(tmp_path):
@@ -527,6 +494,12 @@ def _gstate(plugin: CodexResetWatcher, gid: str = "100000001") -> dict:
     return plugin._group_state(gid)  # noqa: SLF001
 
 
+async def _drain_inflight(plugin: CodexResetWatcher) -> None:
+    """等待全部后台管线（l4/l1/banked）完成（轮询 0.01s）。"""
+    while plugin._inflight:
+        await asyncio.sleep(0.01)
+
+
 def _conclusion(
     kind: str = "scheduled",
     hours: float = 3.0,
@@ -543,16 +516,21 @@ def _conclusion(
 
 
 def _run(plugin: CodexResetWatcher, conclusion: Conclusion | None):
+    """v0.1.10 起生产路径不再调用 _maybe_notify（Tibo 用户侧退役）。
+    本助手显式驱动保留的 _maybe_notify（死代码），仅用于覆盖其内部
+    去重/升级/多群逻辑；生产用户行为由 Tibo 退役测试（零发送）代表。"""
+
     async def scenario():
-        async def fake_fetch(feed=None) -> Conclusion | None:
-            return conclusion
+        if conclusion is None:
+            return
 
         async def none_fetch(url: str, timeout_seconds: int):
             return None  # feed 车道数据置空，保持既有用例聚焦 Tibo 车道
 
         plugin._get_json = none_fetch  # type: ignore[method-assign]
-        plugin._fetch_conclusion = fake_fetch  # type: ignore[method-assign]
-        await plugin._check_once()
+        await plugin._maybe_notify(  # noqa: SLF001
+            conclusion, plugin._target_groups(), plugin._target_zone()  # noqa: SLF001
+        )
 
     asyncio.run(scenario())
 
@@ -947,7 +925,8 @@ def test_feed_baseline_first_run_silent_full_history(tmp_path):
 
 def test_feed_baseline_not_repeated_and_new_events_notify(tmp_path, monkeypatch):
     """baseline 后：live 真实 payload 相对 probe 新增的 banked 事件
-    （announced + arriving×2）各通知一次；已 baseline 的旧事件静默。"""
+    （announced + arriving×2）各通知一次（v0.1.10 统一结构，经后台管线）；
+    已 baseline 的旧事件静默。"""
     monkeypatch.setattr(plugin_module, "_utcnow", _fixed_now)
     plugin = _make_plugin(tmp_path)
     _wire_feed(plugin, _probe("probe_cr_feed.json"))
@@ -955,13 +934,20 @@ def test_feed_baseline_not_repeated_and_new_events_notify(tmp_path, monkeypatch)
     assert plugin._ctx.send.sent_messages == []
 
     _wire_feed(plugin, _probe("live/feed_0905.json"))
-    asyncio.run(plugin._check_once())
+
+    async def round_two():
+        await plugin._check_once()
+        await _drain_inflight(plugin)
+
+    asyncio.run(round_two())
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 3
-    assert all(b.startswith("🎟️ Banked Reset") for b in bodies)
+    assert all(b.startswith("Codex Banked Reset 提醒") for b in bodies)
     joined = "\n".join(bodies)
-    assert "已公告" in joined and "到账中" in joined
-    assert "不代表当前额度已自动刷新" in joined
+    # 生命周期标签与固定免责声明行退役；正文来自 feed tweets[] 全文
+    assert "已公告" not in joined and "不代表当前额度已自动刷新" not in joined
+    assert "We will give one banked reset for every day" in joined
+    assert "Tibo 原文摘录：" in joined  # feed 兜底来源 → 诚实措辞
     assert "banked:2095651088502591861:announced" in set(
         _gstate(plugin)["notified_keys"]
     )
@@ -995,7 +981,12 @@ def test_feed_send_failure_leaves_key_for_retry(tmp_path, monkeypatch):
 
     plugin._send_group_text = failing_send  # type: ignore[method-assign]
     _wire_feed(plugin, _probe("live/feed_0905.json"))
-    asyncio.run(plugin._check_once())
+
+    async def run_and_drain():
+        await plugin._check_once()
+        await _drain_inflight(plugin)
+
+    asyncio.run(run_and_drain())
     keys = set(_gstate(plugin)["notified_keys"])
     assert "banked:2095651088502591861:announced" not in keys
     assert keys == {
@@ -1016,127 +1007,184 @@ def test_repeat_poll_no_duplicate_feed_notify(tmp_path, monkeypatch):
     _gstate(plugin)["feed_baseline_done"] = True
     _gstate(plugin)["notified_keys"] = []
     _wire_feed(plugin, _probe("live/feed_0905.json"))
-    asyncio.run(plugin._check_once())
+
+    async def check_and_drain():
+        await plugin._check_once()
+        await _drain_inflight(plugin)
+
+    asyncio.run(check_and_drain())
     first_count = len(plugin._ctx.send.sent_messages)
     assert first_count == 3  # 仅 9 月 banked 新事件；8 月历史全部被 48h 护栏跳过
 
-    asyncio.run(plugin._check_once())
+    asyncio.run(check_and_drain())
     assert len(plugin._ctx.send.sent_messages) == first_count
 
 
 # ===== feed 车道：通知文案（产品红线） =====
 
 
-def test_banked_message_disclaimer_real_signal():
-    """banked 通知必须声明"存入供之后兑换，不代表当前额度已自动刷新"。"""
+def test_banked_notice_unified_structure_real_signal():
+    """v0.1.10：banked 通知改用统一结构（真实 9 月 announced 信号）——
+    标题「Codex Banked Reset 提醒」+ 中文翻译 + 完整原文 + 原帖；
+    固定文案中的生命周期标签/免责声明行退役（语义安全移入 Contract）。"""
     feed = _probe("live/feed_0905.json")
     announced = next(
         s
         for s in signals_from_feed(feed)
         if s.lane == "banked" and s.semantic_state == "announced"
     )
-    body = build_banked_message(announced, BEIJING)
-    assert body.startswith("🎟️ Banked Reset 已公告")
-    assert "手动兑换" in body
-    assert "不代表当前额度已自动刷新" in body
-    assert "Tibo 原文：" in body
-    assert "原帖：https://x.com/thsottiaux/status/2095651088502591861" in body
+    body = build_full_notice(
+        BANKED_NOTICE_TITLE,
+        announced.url,
+        announced.raw_text,
+        "full",
+        "我们将为 Astra 不可用的每一天补偿一次 banked reset。",
+    )
+    assert body.startswith("Codex Banked Reset 提醒")
+    assert "中文翻译：\n我们将为 Astra 不可用的每一天补偿一次 banked reset。" in body
+    assert "Tibo 原文：\n" + announced.raw_text in body
+    assert f"原帖：{announced.url}" in body
+    # 旧展示内容不再出现
+    assert "已公告" not in body and "到账中" not in body and "已存入" not in body
+    assert "重置原因" not in body
+    assert "Banked Reset 是官方存入账户" not in body
+    assert "北京时间" not in body  # 标题时间戳退役
 
 
-def test_banked_available_message_never_claims_quota_reset():
-    """available = 已存入可兑换，绝不表达为"当前额度已重置"。"""
+def test_contract_prompt_banked_safety_is_translation_constraint():
+    """Banked 语义安全红线移入固定 Contract：不得译成"当前额度已自动刷新"，
+    且只是防误译约束——不得要求模型添加原文没有的 Banked 解释；
+    faithfulness（原文说什么翻什么）必须同时在场。"""
+    assert "Banked Reset" in CONTRACT_PROMPT
+    assert "不得把 Banked Reset 表达为当前额度已经自动刷新" in CONTRACT_PROMPT
+    assert "不添加原文没有的 Banked 解释" in CONTRACT_PROMPT
+    assert "不得总结、压缩、删减、省略或改写成摘要" in CONTRACT_PROMPT
+    # translation-only 契约：唯一输出字段
+    assert '{"translation_zh": string}' in CONTRACT_PROMPT
+    for retired in ("summary_zh", "time_expressions", "key_points", "ambiguities", "context_notes"):
+        assert retired not in CONTRACT_PROMPT
+
+
+def test_banked_available_never_claimed_auto_refresh_in_contract():
+    """available 红线（v0.1.10 起在 Contract 层强制）：Contract 明确 Banked
+    Reset 是存入账户、供之后使用/兑换的机会。真实 available 推文原文
+    （"has landed ... redeemable on demand"）交由完整翻译忠实传达。"""
+    assert "存入账户、供之后使用/兑换" in CONTRACT_PROMPT
     feed = _probe("probe_cr_feed.json")
     available = next(
         s
         for s in signals_from_feed(feed)
         if s.lane == "banked" and s.semantic_state == "available"
     )
-    body = build_banked_message(available, BEIJING)
-    assert "已存入（可兑换）" in body
-    assert "可在账户中兑换使用" in body
-    assert "普通 reset 节奏不受影响" in body
-    assert "当前额度已重置" not in body
+    assert "landed" in available.raw_text
 
 
-def test_declared_message_content_real_signal():
-    """Global 已宣告通知：含原文与原帖（真实 8-29 宣告事件）。"""
-    feed = _probe("probe_cr_feed.json")
-    declared = next(
-        s
-        for s in signals_from_feed(feed)
-        if s.key == "global-declared:2093801758665715784"
+# ===== v0.1.10 统一完整通知 formatter（Global / Banked 共用）=====
+
+
+def test_global_notice_full_structure_exact():
+    """统一完整通知结构精确断言：标题 → 中文翻译 → Tibo 原文 → 原帖。"""
+    url = "https://x.com/thsottiaux/status/1"
+    body = build_full_notice(
+        GLOBAL_NOTICE_TITLE, url, "Lands around 6pm PST today.", "full", "预计今天北京时间 10:00 左右落地。"
     )
-    body = build_declared_message(declared, BEIJING)
-    assert body.startswith("📢 Global Reset 已宣告")
-    assert "Tibo 原文：We are reseting usage" in body
-    assert "重置原因：" in body
-    assert "原帖：https://x.com/thsottiaux/status/2093801758665715784" in body
+    assert body == (
+        "Codex 额度重置提醒\n"
+        "\n"
+        "中文翻译：\n"
+        "预计今天北京时间 10:00 左右落地。\n"
+        "\n"
+        "Tibo 原文：\n"
+        "Lands around 6pm PST today.\n"
+        "\n"
+        f"原帖：{url}"
+    )
+
+
+def test_global_notice_observed_semantic_title():
+    """observed A-primary 保留语义标题「Codex 额度重置已确认生效」，
+    正文同样是统一结构；不恢复旧的重置原因/确认时间等字段。"""
+    body = build_full_notice(
+        GLOBAL_CONFIRMED_TITLE,
+        "https://x.com/thsottiaux/status/2",
+        "All reset for everyone.",
+        "full",
+        "所有人的额度都已重置。",
+    )
+    assert body.startswith("Codex 额度重置已确认生效")
+    assert "中文翻译：" in body and "Tibo 原文：" in body and "原帖：" in body
+    assert "确认时间" not in body
+    assert "重置原因" not in body
+
+
+def test_global_notice_excerpt_label_honesty():
+    """completeness=unknown → 诚实措辞「Tibo 原文摘录」，且不得同时出现
+    「Tibo 原文：」；展示护栏裁剪同样降级为摘录。"""
+    excerpt = build_full_notice(
+        GLOBAL_NOTICE_TITLE, "https://x.com/thsottiaux/status/3", "只有部分文本", "unknown", "译文"
+    )
+    assert "Tibo 原文摘录：\n只有部分文本" in excerpt
+    assert "Tibo 原文：" not in excerpt
+    long_text = "x" * 3000
+    truncated = build_full_notice(
+        GLOBAL_NOTICE_TITLE, None, long_text, "full", None
+    )
+    assert "Tibo 原文摘录：" in truncated
+    assert ("x" * 1999 + "…") in truncated
+
+
+def test_global_notice_llm_failure_and_missing_fields():
+    """LLM 失败（translation=None）→ 无中文翻译块，告警结构完整；
+    正文缺失 → 原文块整块省略；URL 缺失 → 原帖行省略。"""
+    body = build_full_notice(
+        GLOBAL_NOTICE_TITLE,
+        "https://x.com/thsottiaux/status/4",
+        "original text",
+        "full",
+        None,
+    )
+    assert body == (
+        "Codex 额度重置提醒\n"
+        "\n"
+        "Tibo 原文：\n"
+        "original text\n"
+        "\n"
+        "原帖：https://x.com/thsottiaux/status/4"
+    )
+    bare = build_full_notice(GLOBAL_NOTICE_TITLE, None, None, None, None)
+    assert bare == "Codex 额度重置提醒"
+    # 空 URL / 非字符串 URL：原帖行省略，不否决通知
+    assert build_full_notice(GLOBAL_NOTICE_TITLE, "", "t", "full", None) == (
+        "Codex 额度重置提醒\n\nTibo 原文：\nt"
+    )
+    assert build_full_notice(GLOBAL_NOTICE_TITLE, 12345, None, None, None) == (
+        "Codex 额度重置提醒"
+    )
 
 
 # ===== Tibo 车道：预估预告与原文展示 =====
 
 
-def test_approximate_scheduled_sends_estimated(tmp_path):
-    """Global 预告车道：SCHEDULED + isApproximate=true → "预估"通知。"""
-    plugin = _make_plugin(tmp_path)
-    _stage_payload(plugin, _tibo_current(isApproximate=True))
-    bodies = [b for _, b in plugin._ctx.send.sent_messages]
-    assert len(bodies) == 1
-    assert bodies[0].startswith("Codex 额度重置预告｜北京时间")
-    assert "状态：预估" in bodies[0]
-    assert "距离重置：" in bodies[0]
-    assert _gstate(plugin)["active_plan"] is not None
-
-
-def test_approximate_then_exact_same_time_upgrades(tmp_path):
-    """同一时间：预估先发；精确化后补发"已确认"（去重唯一升级例外）；
-    此后重复精确时间不再发。"""
+def test_approximate_and_update_variants_never_send(tmp_path):
+    """v0.1.10 退役回归：isApproximate 预告、预估→精确升级、时间变化等
+    Tibo 变体全部零 QQ 通知（feed join 的原文/原帖展示随之退役）。"""
     plugin = _make_plugin(tmp_path)
     moment = (datetime.now(timezone.utc) + timedelta(hours=3)).replace(microsecond=0)
+    base = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    t2 = base + timedelta(hours=4)
+    feed = _probe("probe_cr_feed.json")
+    target = next(t for t in feed["tweets"] if t.get("text"))
+
     _stage_payload(
         plugin, _tibo_current(isApproximate=True, expectedResetAt=moment.isoformat())
     )
     _stage_payload(plugin, _tibo_current(expectedResetAt=moment.isoformat()))
-    _stage_payload(plugin, _tibo_current(expectedResetAt=moment.isoformat()))
-    bodies = [b for _, b in plugin._ctx.send.sent_messages]
-    assert len(bodies) == 2
-    assert "状态：预估" in bodies[0]
-    assert "状态：已确认" in bodies[1]
-    assert _gstate(plugin)["last_notified_approximate"] is False
-
-
-def test_exact_after_approximate_different_time_sends_update(tmp_path):
-    """预估排期后精确时间变化 → "时间更新"以预估时间为原计划。"""
-    plugin = _make_plugin(tmp_path)
-    base = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-    t1 = base + timedelta(hours=2)
-    t2 = base + timedelta(hours=4)
-    _stage_payload(
-        plugin, _tibo_current(isApproximate=True, expectedResetAt=t1.isoformat())
-    )
     _stage_payload(
         plugin, _tibo_current(status="TIME_CHANGED", expectedResetAt=t2.isoformat())
     )
-    bodies = [b for _, b in plugin._ctx.send.sent_messages]
-    assert len(bodies) == 2
-    assert "原计划：北京时间" in bodies[1]
-    assert t1.astimezone(BEIJING).strftime("%Y-%m-%d %H:%M") in bodies[1]
-    assert "最新计划：北京时间" in bodies[1]
-
-
-def test_tibo_message_includes_feed_source_text_and_link(tmp_path):
-    """Tibo 通知附原文+原帖（feed tweets[] 按 ID join），仅展示。"""
-    plugin = _make_plugin(tmp_path)
-    feed = _probe("probe_cr_feed.json")
-    target = next(t for t in feed["tweets"] if t.get("text"))
-    current = _tibo_current(resetSourceUrl=target["url"])
-    _wire_feed(plugin, feed, current=current)
+    _wire_feed(plugin, feed, current=_tibo_current(resetSourceUrl=target["url"]))
     asyncio.run(plugin._check_once())
-    bodies = [b for _, b in plugin._ctx.send.sent_messages]
-    # 首轮 feed 车道做 baseline（静默），Tibo 车道发一条。
-    assert len(bodies) == 1
-    assert f"原帖：{target['url']}" in bodies[0]
-    assert "Tibo 原文：" in bodies[0]
+    assert plugin._ctx.send.sent_messages == []
 
 
 # ===== 状态迁移：baseline 标志独立于 schema 版本 =====
@@ -1357,21 +1405,20 @@ def test_state_rollback_preserves_tibo_dedup_state(tmp_path):
     assert _parse_iso(_gstate(plugin)["last_notified_reset_at"]) == moment
     assert _gstate(plugin)["active_plan"]["source_url"] == url
 
-    # 同一 SCHEDULED 已通知过 → 静默。
+    # 同一 SCHEDULED 已通知过 → 静默（去重状态经回滚保留，死代码路径验证）。
     asyncio.run(
         plugin._maybe_notify(_conclusion(reset_at=moment), ["100000001"], BEIJING)  # noqa: SLF001
     )
     assert plugin._ctx.send.sent_messages == []
 
-    # TIME_CHANGED 新时间 → "时间更新"且原计划来自保留的 active_plan。
+    # v0.1.10：TIME_CHANGED 经生产路径不再发送任何 QQ 通知；
+    # 去重/active_plan 字段仍经 _carry_validated_state 保留（死代码兼容）。
     _stage_payload(
         plugin,
         _tibo_payload("TIME_CHANGED", (moment + timedelta(hours=2)).isoformat(), url),
     )
-    bodies = [b for _, b in plugin._ctx.send.sent_messages]
-    assert len(bodies) == 1
-    assert "原计划：北京时间" in bodies[0]
-    assert moment.astimezone(BEIJING).strftime("%Y-%m-%d %H:%M") in bodies[0]
+    assert plugin._ctx.send.sent_messages == []
+    assert _gstate(plugin)["active_plan"]["reset_at"] == moment.isoformat()
 
 
 def test_state_rollback_drops_corrupt_tibo_fields(tmp_path):
@@ -1594,8 +1641,9 @@ def test_multi_group_failure_only_failed_group_retries(tmp_path):
 
 
 def test_multi_group_feed_failure_only_failed_group_retries(tmp_path, monkeypatch):
-    """feed 车道同样按群独立：100000002 首轮 3 条全部失败 → 下一轮仅 100000002 收到
-    3 条 banked 通知，100000001 零重复。"""
+    """feed 车道同样按群独立（v0.1.10 banked 后台管线）：100000002 首轮
+    3 条全部失败 → 下一轮仅 100000002 收到 3 条 banked 通知，100000001
+    零重复。"""
     monkeypatch.setattr(plugin_module, "_utcnow", _fixed_now)
     plugin = _make_plugin(tmp_path, group_id="", group_ids=["100000001", "100000002"])
     # 两群均已 baseline 完成（本测试聚焦投递隔离，不测 baseline）。
@@ -1614,10 +1662,15 @@ def test_multi_group_feed_failure_only_failed_group_retries(tmp_path, monkeypatc
         return True
 
     plugin._send_group_text = flaky_send  # type: ignore[method-assign]
-    asyncio.run(plugin._check_once())
+
+    async def check_and_drain():
+        await plugin._check_once()
+        await _drain_inflight(plugin)
+
+    asyncio.run(check_and_drain())
     assert sent == ["100000001", "100000001", "100000001"]
     # 第二轮：100000001 静默，100000002 重试成功。
-    asyncio.run(plugin._check_once())
+    asyncio.run(check_and_drain())
     assert sent == ["100000001", "100000001", "100000001", "100000002", "100000002", "100000002"]
     assert "banked:2095651088502591861:announced" in set(
         _gstate(plugin, "100000002")["notified_keys"]
@@ -2063,7 +2116,8 @@ def test_0905_false_positive_fixture_never_triggers_mirror(tmp_path):
 
 
 def test_upstream_alert_minimal_contract_fires_without_display_fields(tmp_path):
-    """三个契约字段之外全部缺失：仍必须触发（展示字段不否决）。"""
+    """三个契约字段之外全部缺失：仍必须触发（展示字段不否决）。
+    v0.1.10：置信度/预计时间等展示字段退役 → 极简告警仅剩标题。"""
     plugin = _make_plugin(tmp_path)
     osig = {"delivery_destination": "alerts", "alert_event_id": "signal:X:likely"}
     asyncio.run(
@@ -2071,13 +2125,14 @@ def test_upstream_alert_minimal_contract_fires_without_display_fields(tmp_path):
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 1
-    assert bodies[0] == "📢 Codex 额度重置信号"  # 全部展示字段缺失：仅标题
+    assert bodies[0] == GLOBAL_NOTICE_TITLE  # 全部展示字段缺失：仅标题
     assert _gstate(plugin)["upstream_alert_keys"] == ["upstream-alert:signal:X:likely"]
 
 
 def test_upstream_alert_unknown_display_values_shown_raw_not_vetoed(tmp_path):
-    """展示字段未知 enum / 错误类型 / 极旧 at：原样展示、绝不否决
-    （official_signal 是当前告警指针，无 freshness 窗口）。"""
+    """展示字段未知 enum / 错误类型 / 极旧 at：绝不否决告警
+    （official_signal 是当前告警指针，无 freshness 窗口）。
+    v0.1.10：score/window 等不再展示，但字段存在仍不得阻断发送与 URL 展示。"""
     plugin = _make_plugin(tmp_path)
     osig = {
         "delivery_destination": "alerts",
@@ -2097,59 +2152,40 @@ def test_upstream_alert_unknown_display_values_shown_raw_not_vetoed(tmp_path):
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 1
     body = bodies[0]
-    assert body.startswith("📢 Codex 额度重置信号\n\n置信度：high")
-    assert "预计时间：6pm PST" in body
+    assert body.startswith(GLOBAL_NOTICE_TITLE)
     assert "原帖：not-a-url" in body
+    # v0.1.10 退役字段：置信度/预计时间不得出现；taxonomy 仅内部使用
+    assert "置信度" not in body
+    assert "预计时间" not in body
     assert "2026-01-01" not in body  # at 只是指针元数据，不展示也不否决
-    # taxonomy 仅内部使用：tier / signal_type / alert_event_id 不出现在用户文案
     assert "super-strong" not in body
     assert "123" not in body
     assert "signal:Y:unknown_tier" not in body
     assert "告警 ID" not in body
 
 
-def test_upstream_alert_window_deadline_renders_beijing():
-    """真实 window 形态（8-31 93% dated_commitment 同款）：label + 北京时间。"""
-    osig = _osig(
-        window={
-            "label": "end of Monday",
-            "time_zone": "America/Los_Angeles",
-            "target_kind": "deadline",
-            "target_at": "2026-09-01T06:59:59.999Z",
-        }
-    )
-    body = build_signal_message(osig)
-    assert "预计时间：北京时间 9月1日 14:59（end of Monday）" in body
-    # 真实 9-8 形态：window=None → 省略整行
-    assert "预计时间" not in build_signal_message(_osig())
-
-
-def test_upstream_alert_window_unparseable_target_shown_raw():
-    body = build_signal_message(
-        _osig(window={"label": "soon", "target_at": "not-a-date"}),
-    )
-    assert "预计时间：soon" in body
-    # label 缺失但 target_at 可展示：原样展示
-    assert "预计时间：soon-ish" in build_signal_message(
-        _osig(window={"target_at": "soon-ish"}),
-    )
-    # 全空 dict / 不可解析形态：省略行，不崩、不否决
-    assert "预计时间" not in build_signal_message(_osig(window={}))
-    assert _window_display(42) == "42"
-    assert _score_display({"value": None}) is None
-    assert _score_display({"value": True}) == "True"
-    assert _score_display(None) is None
-
-
 def test_upstream_alert_message_hides_internal_implementation():
     """QQ 用户侧不得暴露内部实现：上游站名（Codex Reset）、告警身份
     （alert_event_id/告警 ID）、分类 taxonomy（signal_type/tier）、
-    provider 名称（fxtwitter/vxtwitter）、镜像机制与上游来源一律不出现；
-    只展示置信度/时间窗/原文（或摘录）/原帖。"""
-    body = build_signal_message(_osig(), "完整正文内容", "full")
-    assert body.startswith("📢 Codex 额度重置信号\n\n置信度：83%")
+    provider 名称（fxtwitter/vxtwitter）、镜像机制与上游来源一律不出现。
+    v0.1.10：统一结构只有原文（或摘录）/中文翻译/原帖；置信度、预计时间、
+    AI 解读块全部退役。"""
+    body = build_full_notice(
+        GLOBAL_NOTICE_TITLE,
+        _osig()["url"],
+        "完整正文内容",
+        "full",
+        "完整中文翻译内容",
+    )
+    assert body.startswith(GLOBAL_NOTICE_TITLE)
+    assert "中文翻译：\n完整中文翻译内容" in body
     assert "Tibo 原文：\n完整正文内容" in body
     assert "原帖：https://x.com/thsottiaux/status/2097043464538264003" in body
+    # v0.1.10 退役的旧展示字段负断言
+    assert "置信度" not in body and "83%" not in body
+    assert "预计时间" not in body
+    assert "AI 解读" not in body
+    assert "要点" not in body and "关键信息" not in body and "说明：" not in body
     # 内部实现负断言（taxonomy 值与机制词一并覆盖）：
     assert "Codex Reset" not in body
     assert "镜像" not in body and "上游" not in body
@@ -2161,7 +2197,9 @@ def test_upstream_alert_message_hides_internal_implementation():
     assert "fxtwitter" not in body and "vxtwitter" not in body
     assert "官方承诺" not in body  # 术语红线沿用：不放大上游语义判定
     # 非 full（unknown/truncated）→ 诚实措辞「摘录」：
-    excerpt = build_signal_message(_osig(), "只有前 200 字", "unknown")
+    excerpt = build_full_notice(
+        GLOBAL_NOTICE_TITLE, _osig()["url"], "只有前 200 字", "unknown", None
+    )
     assert "Tibo 原文摘录：\n只有前 200 字" in excerpt
     assert "Tibo 原文：" not in excerpt  # 「原文：」不得出现在摘录文案中
 
@@ -2186,9 +2224,11 @@ def test_real_0908_forecast_mirrors_once_then_dedups(tmp_path):
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 1
     body = bodies[0]
-    assert body.startswith("📢 Codex 额度重置信号\n\n置信度：83%")
+    assert body.startswith(GLOBAL_NOTICE_TITLE)
     assert "原帖：https://x.com/thsottiaux/status/2097043464538264003" in body
-    # QQ 正文不暴露内部实现；alert_event_id 仅存 state / 内部日志：
+    # v0.1.10：置信度等旧展示字段退役；QQ 正文不暴露内部实现；
+    # alert_event_id 仅存 state / 内部日志
+    assert "置信度" not in body and "83%" not in body
     assert "Codex Reset" not in body
     assert "2097043464538264003:likely" not in body
     assert "告警 ID" not in body and "镜像" not in body
@@ -2219,8 +2259,9 @@ def test_tier_upgrade_new_alert_event_id_mirrors_again(tmp_path):
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 2
-    # 升级告警以新置信度再镜像一次；alert_event_id 仅落 state，不进文案：
-    assert "置信度：93%" in bodies[1]
+    # 升级告警以新告警身份再镜像一次（v0.1.10 无置信度展示）；
+    # alert_event_id 仅落 state，不进文案：
+    assert "置信度" not in bodies[1] and "93%" not in bodies[1]
     assert _gstate(plugin)["upstream_alert_keys"] == [
         "upstream-alert:signal:2097043464538264003:likely",
         "upstream-alert:signal:2097043464538264003:strong",
@@ -2395,7 +2436,7 @@ def test_no_cross_lane_dedup_between_feed_and_mirror(tmp_path, monkeypatch):
     asyncio.run(plugin._check_once())
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 1
-    assert bodies[0].startswith("📢 Codex 额度重置信号")
+    assert bodies[0].startswith(GLOBAL_NOTICE_TITLE)
 
 
 # ===== v0.1.7 L4 Tweet Content Provider（展示层 enrichment，不参与触发/去重）=====
@@ -2453,7 +2494,7 @@ def test_golden_fx_provider_through_production_path(tmp_path):
     assert "Tibo 原文：" + N1 in bodies[0]
     assert "Lands around 6pm PST today" in bodies[0]
     assert "Tibo 原文摘录" not in bodies[0]
-    assert "置信度：83%" in bodies[0]
+    assert bodies[0].startswith(GLOBAL_NOTICE_TITLE)  # v0.1.10：无置信度行
 
 
 def test_fx_timeout_falls_to_vxtwitter(tmp_path):
@@ -2541,9 +2582,11 @@ def test_all_text_sources_missing_still_sends(tmp_path):
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 1
-    assert bodies[0].startswith("📢 Codex 额度重置信号")
-    assert "置信度：83%" in bodies[0] and "原帖：" in bodies[0]
+    assert bodies[0] == (
+        f"{GLOBAL_NOTICE_TITLE}\n\n原帖：https://x.com/thsottiaux/status/42"
+    )
     assert "Tibo 原文" not in bodies[0]  # 无正文则整块省略
+    assert "置信度" not in bodies[0]  # v0.1.10：置信度展示退役
 
 
 def test_provider_timeout_budget():
@@ -2656,7 +2699,9 @@ def test_enrichment_cap_guards_pathological_note_tweet(tmp_path):
     content = _content_from_provider_payload(long_payload, "fxtwitter")
     assert content is not None and content.completeness == "full"
     assert len(content.text) == 3000  # Provider 层完整保留
-    body = build_signal_message(_osig(), content.text, content.completeness)
+    body = build_full_notice(
+        GLOBAL_NOTICE_TITLE, _osig()["url"], content.text, content.completeness
+    )
     assert "Tibo 原文摘录：" in body  # 展示被裁剪 → 不得仍称「原文」
     assert "Tibo 原文：" not in body
     assert ("x" * 1999 + "…") in body  # 展示层 ~2000 字含省略号
@@ -2778,19 +2823,11 @@ def _llm_plugin(tmp_path: Path, llm_overrides: dict | None = None, **watcher: ob
     return plugin
 
 
-def test_llm_success_adds_ai_block(tmp_path):
-    """LLM 返回合法 JSON → QQ 消息含 AI 解读块（翻译/要点/关键信息），
-    且不暴露内部实现词。"""
+def test_llm_success_adds_translation(tmp_path):
+    """LLM 返回合法 translation-only JSON → QQ 消息含「中文翻译」块
+    （原文照旧保留），且不出现任何退役的 AI 解读字段与内部实现词。"""
     plugin = _llm_plugin(tmp_path)
-    good = {
-        "translation_zh": "祝你说谎愉快……全球重置今天 18:00 左右落地",
-        "summary_zh": "Tibo 宣布全球重置，约今天 6pm PST 落地",
-        "reset": {"mentioned": True, "type": "global", "scope": "all paid subscriptions"},
-        "time_expressions": [{"raw": "around 6pm PST today", "approximate": True}],
-        "key_points": ["歌词玩梗开场"],
-        "ambiguities": [],
-        "context_notes": [],
-    }
+    good = {"translation_zh": "祝你说谎愉快……全球重置预计今天北京时间 10:00 左右落地"}
     async def fake_llm(prompt, model="", temperature=None, max_tokens=None, **kwargs):
         return {"success": True, "response": json.dumps(good, ensure_ascii=False), "model_name": "m1", "total_tokens": 100}
 
@@ -2803,12 +2840,14 @@ def test_llm_success_adds_ai_block(tmp_path):
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 1
     body = bodies[0]
-    assert "—— AI 解读 ——" in body
-    assert "翻译：祝你说谎愉快" in body
-    assert "时间：around 6pm PST today（约）" in body
-    assert "类型：global" in body
+    assert body.startswith(GLOBAL_NOTICE_TITLE)
+    assert "中文翻译：\n祝你说谎愉快……全球重置预计今天北京时间 10:00 左右落地" in body
     assert "Lands around 6pm PST today" in body  # 原文仍在
     assert "Tibo 原文：" in body and "Tibo 原文摘录" not in body
+    # v0.1.10：AI 解读字段全部退役
+    assert "—— AI 解读 ——" not in body
+    assert "要点" not in body and "类型：global" not in body
+    assert "时间：around 6pm PST today" not in body
     assert "fxtwitter" not in body and "official_signal" not in body
     # receipt 正常写入
     assert _gstate(plugin)["upstream_alert_keys"] == [
@@ -2833,12 +2872,12 @@ def test_llm_host_failure_no_repair_alert_still_sent(tmp_path):
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert llm_calls["n"] == 1  # 不修复
-    assert len(bodies) == 1 and "—— AI 解读 ——" not in bodies[0]
-    assert "Tibo 原文：" in bodies[0]  # v0.1.7 通知不受影响
+    assert len(bodies) == 1 and "中文翻译" not in bodies[0]
+    assert "Tibo 原文：" in bodies[0]  # 通知不受影响
 
 
 def test_llm_rpc_exception_no_repair(tmp_path):
-    """RPC/调用异常 → 不修复直接无 AI 块。"""
+    """RPC/调用异常 → 不修复直接无翻译块。"""
     plugin = _llm_plugin(tmp_path)
     llm_calls = {"n": 0}
 
@@ -2854,13 +2893,13 @@ def test_llm_rpc_exception_no_repair(tmp_path):
     )
     assert llm_calls["n"] == 1
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
-    assert len(bodies) == 1 and "—— AI 解读 ——" not in bodies[0]
+    assert len(bodies) == 1 and "中文翻译" not in bodies[0]
 
 
 def test_llm_bad_json_one_repair_then_success(tmp_path):
     """首次输出坏 JSON（含围栏与杂讯）→ 用剩余预算修复一次 → 成功。"""
     plugin = _llm_plugin(tmp_path)
-    good = {"translation_zh": "翻", "summary_zh": "要", "reset": {"mentioned": False}, "time_expressions": [], "key_points": [], "ambiguities": [], "context_notes": []}
+    good = {"translation_zh": "完整中文翻译"}
     responses = ["抱歉，我无法输出……```json{broken```", "好的：" + json.dumps(good, ensure_ascii=False)]
     rpc_timeouts: list[int] = []
 
@@ -2879,11 +2918,11 @@ def test_llm_bad_json_one_repair_then_success(tmp_path):
     assert rpc_timeouts[1] <= rpc_timeouts[0]  # 修复使用剩余预算（共享总预算）
     assert rpc_timeouts[1] >= 5000  # 且不低于保护下限
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
-    assert len(bodies) == 1 and "—— AI 解读 ——" in bodies[0]
+    assert len(bodies) == 1 and "中文翻译：\n完整中文翻译" in bodies[0]
 
 
 def test_llm_bad_json_repair_fails_alert_still_sent(tmp_path):
-    """修复后仍坏 → 无 AI 块，告警照发。"""
+    """修复后仍坏 → 无翻译块，告警照发。"""
     plugin = _llm_plugin(tmp_path)
     llm_calls = {"n": 0}
 
@@ -2899,7 +2938,7 @@ def test_llm_bad_json_repair_fails_alert_still_sent(tmp_path):
     )
     assert llm_calls["n"] == 2  # 首次+一次修复
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
-    assert len(bodies) == 1 and "—— AI 解读 ——" not in bodies[0]
+    assert len(bodies) == 1 and "中文翻译" not in bodies[0]
     assert "Tibo 原文：" in bodies[0]
 
 
@@ -2923,7 +2962,7 @@ def test_llm_budget_exhausted_skips_repair(tmp_path, monkeypatch):
     )
     assert llm_calls["n"] == 1  # 预算耗尽，不再修复
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
-    assert len(bodies) == 1 and "—— AI 解读 ——" not in bodies[0]
+    assert len(bodies) == 1 and "中文翻译" not in bodies[0]
 
 
 def test_llm_disabled_no_llm_call(tmp_path):
@@ -2941,32 +2980,42 @@ def test_llm_disabled_no_llm_call(tmp_path):
     assert len(plugin._ctx.send.sent_messages) == 1  # v0.1.7 通知照常
 
 
-def test_llm_output_validation_defaults_and_caps():
-    """确定性清洗：缺失字段安全默认、未知字段忽略、类型不符安全处理、
-    字符串/数组限幅；核心输出全空 → None。"""
-    obj = {
-        "translation_zh": "翻" * 2000,
-        "summary_zh": 42,  # 类型不符 → 空
-        "unknown_field": "忽略",
-        "reset": {"mentioned": "yes", "type": 1, "scope": None},
-        "time_expressions": [
-            {"raw": "6pm PST", "approximate": 1},
-            {"raw": "", "approximate": True},
-            "garbage",
-        ],
-        "key_points": ["a", "", "b" * 500, 3],
-    }
-    v = _validate_llm_analysis(obj)
+def test_llm_translation_validation_newlines_caps_and_defaults():
+    """translation-only 校验：保留换行（歌词/分段忠实性）、CRLF 统一、
+    去首尾空白；空/类型不符 → None；未知字段忽略；限幅只防病态输出。"""
+    assert _validate_llm_translation({"translation_zh": "第一行\n第二行"}) == "第一行\n第二行"
+    assert _validate_llm_translation({"translation_zh": "a\r\nb\rc"}) == "a\nb\nc"
+    assert _validate_llm_translation({"translation_zh": "  x  "}) == "x"
+    assert _validate_llm_translation({"translation_zh": 42}) is None
+    assert _validate_llm_translation({"translation_zh": ""}) is None
+    assert _validate_llm_translation({"translation_zh": "   \n  "}) is None
+    assert _validate_llm_translation({"unknown_field": "忽略"}) is None
+    assert _validate_llm_translation("nope") is None
+    # 限幅：超过上限截断（防病态输出），上限内完整保留
+    long = "x" * (TRANSLATION_MAX_CHARS + 100)
+    v = _validate_llm_translation({"translation_zh": long})
     assert v is not None
-    assert len(v["translation_zh"]) == 1500 and v["translation_zh"].endswith("…")
-    assert v["summary_zh"] == ""
-    assert v["reset"] == {"mentioned": False, "type": "", "scope": ""}
-    assert v["time_expressions"] == [{"raw": "6pm PST", "approximate": False}]  # 1 非严格 True
-    assert len(v["key_points"]) == 2
-    assert v["key_points"][0] == "a"
-    assert len(v["key_points"][1]) == 240 and v["key_points"][1].endswith("…")
-    assert _validate_llm_analysis({"summary_zh": ""}) is None  # 双核心全空
-    assert _validate_llm_analysis("nope") is None
+    assert len(v) == TRANSLATION_MAX_CHARS and v.endswith("…")
+    exact = _validate_llm_translation({"translation_zh": "y" * TRANSLATION_MAX_CHARS})
+    assert exact == "y" * TRANSLATION_MAX_CHARS  # 恰好上限：不截断
+
+
+def test_translation_cap_accommodates_real_corpus():
+    """限幅红线：TRANSLATION_MAX_CHARS 必须远大于全部真实 Tibo 语料原文
+    长度（含黄金 provider 全文），真实完整翻译不会被截断。"""
+    texts: list[str] = []
+    for name in ("probe_cr_feed.json", "live/feed_0905.json"):
+        feed = _probe(name)
+        texts.extend(str(t.get("text") or "") for t in feed.get("tweets", []))
+    texts.append(str(_FX_GOLDEN["tweet"]["text"]))
+    texts.append(str(_VX_GOLDEN["text"]))
+    texts = [t for t in texts if t]
+    longest = max(len(t) for t in texts)
+    assert longest > 0
+    # 中文译文一般不比原文更长；4 倍余量保证任何忠实完整翻译都不受限幅影响
+    assert TRANSLATION_MAX_CHARS >= longest * 4
+    t = _validate_llm_translation({"translation_zh": "译" * longest})
+    assert t is not None and "…" not in t and len(t) == longest
 
 
 def test_llm_extract_json_object_variants():
@@ -2980,11 +3029,12 @@ def test_llm_extract_json_object_variants():
 
 
 def test_llm_never_overrides_alert_decision(tmp_path):
-    """LLM 输出「不是 Reset」也绝不影响发送与 receipt（alert decision 不变）。"""
+    """LLM 输出「不是 Reset」的翻译内容也绝不影响发送与 receipt
+    （alert decision 不变；翻译只进文案）。"""
     plugin = _llm_plugin(tmp_path)
 
     async def fake_llm(prompt, model="", temperature=None, max_tokens=None, **kwargs):
-        return {"success": True, "response": json.dumps({"translation_zh": "", "summary_zh": "我认为这不是 Reset"}, ensure_ascii=False), "model_name": "m1", "total_tokens": 0}
+        return {"success": True, "response": json.dumps({"translation_zh": "我认为这不是 Reset，不该发送"}, ensure_ascii=False), "model_name": "m1", "total_tokens": 0}
 
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
     asyncio.run(
@@ -2993,7 +3043,9 @@ def test_llm_never_overrides_alert_decision(tmp_path):
         )
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
-    assert len(bodies) == 1 and "AI 解读" in bodies[0]  # 照常发送（含解读块）
+    assert len(bodies) == 1
+    # 照常发送：翻译内容原样进入文案（也证明它无否决权）
+    assert "中文翻译：\n我认为这不是 Reset，不该发送" in bodies[0]
     assert _gstate(plugin)["upstream_alert_keys"] != []
 
 
@@ -3120,7 +3172,7 @@ def test_llm_config_sanitize_clamps_invalid(tmp_path):
     assert llm["temperature"] == 2.0  # 越界就近钳到上界
     assert llm["max_tokens"] == 64  # 越界就近钳到下界
     assert llm["timeout_seconds"] == 30  # 越界就近钳到下界
-    assert llm["prompt"] == plugin_module.DEFAULT_ANALYSIS_PROMPT
+    assert llm["prompt"] == plugin_module.DEFAULT_TRANSLATION_PROMPT
 
 
 def test_llm_config_schema_widgets(tmp_path):
@@ -3291,7 +3343,7 @@ def test_on_config_update_cancels_inflight_and_recovers(tmp_path):
 
     asyncio.run(asyncio.wait_for(scenario(), 5))
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
-    assert len(bodies) == 1 and "—— AI 解读 ——" not in bodies[0]
+    assert len(bodies) == 1 and "中文翻译" not in bodies[0]
     asyncio.run(plugin.on_unload())
 
 
@@ -3299,18 +3351,12 @@ def test_on_config_update_cancels_inflight_and_recovers(tmp_path):
 
 def test_llm_prompt_contains_no_internal_provider_terms(tmp_path):
     """信息边界：发给 ctx.llm.generate 的实际 prompt 中不得出现内部
-    Provider/数据源 taxonomy（fxtwitter/vxtwitter/content_source/forecast）。"""
+    Provider/数据源 taxonomy（fxtwitter/vxtwitter/content_source/forecast）；
+    v0.1.10：元数据必须携带 published_at / current_time / 目标时区，
+    fixed contract 携带时间本地化与完整翻译规则。"""
     plugin = _llm_plugin(tmp_path)
     captured: dict = {}
-    good = {
-        "translation_zh": "翻译内容",
-        "summary_zh": "要点内容",
-        "reset": {"mentioned": False},
-        "time_expressions": [],
-        "key_points": [],
-        "ambiguities": [],
-        "context_notes": [],
-    }
+    good = {"translation_zh": "翻译内容"}
 
     async def fake_llm(prompt, model="", temperature=None, max_tokens=None, rpc_timeout_ms=None, **kwargs):
         captured["prompt"] = prompt
@@ -3328,6 +3374,16 @@ def test_llm_prompt_contains_no_internal_provider_terms(tmp_path):
     joined = "".join(str(m.get("content", "")) for m in prompt)
     assert "content_completeness: full" in joined  # 完整性标记必须携带
     assert "<SOURCE_TEXT>" in joined and "</SOURCE_TEXT>" in joined
+    # v0.1.10 时间上下文：published_at 来自 official_signal.at；current_time
+    # 由插件注入；目标时区显式给出（Contract 中有本地化规则）
+    assert "published_at: 2026-09-07T19:24:57.000Z" in joined
+    assert "current_time: " in joined
+    assert "target_timezone: Asia/Shanghai" in joined
+    assert "Asia/Shanghai" in CONTRACT_PROMPT
+    assert "published_at" in CONTRACT_PROMPT and "current_time" in CONTRACT_PROMPT
+    # 相对时间基准 / 不猜测 / 保留模糊词 / 不输出独立时间字段
+    for keyword in ("相对时间", "不要单独输出时间字段", "不要猜测", "around / approximately / ~"):
+        assert keyword in CONTRACT_PROMPT, keyword
     for term in ("fxtwitter", "vxtwitter", "content_source", "forecast", "api.fxtwitter.com"):
         assert term not in joined, term
 
@@ -3384,7 +3440,7 @@ def test_config_update_race_no_orphan_alert_task(tmp_path):
     assert "upstream-alert:signal:2097043464538264003:strong" in receipt  # B 正常完成
     assert plugin._inflight == {}
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
-    assert len(bodies) == 1 and "—— AI 解读 ——" not in bodies[0]  # 新配置 llm disabled
+    assert len(bodies) == 1 and "中文翻译" not in bodies[0]  # 新配置 llm disabled
 
 
 # ===== v0.1.9 L1 Confirmation Lane（per-group 四格决策）=====
@@ -3471,7 +3527,7 @@ def test_mixed_groups_same_event_four_quadrant(tmp_path):
     _gstate(plugin, "100000001")["feed_baseline_done"] = True
     _gstate(plugin, "100000002")["feed_baseline_done"] = True
     _gstate(plugin, "100000002")["notified_keys"] = []
-    good = {"translation_zh": "翻", "summary_zh": "要", "reset": {"mentioned": False}, "time_expressions": [], "key_points": [], "ambiguities": [], "context_notes": []}
+    good = {"translation_zh": "完整中文翻译"}
 
     async def fake_llm(prompt, model="", temperature=None, max_tokens=None, rpc_timeout_ms=None, **kwargs):
         return {"success": True, "response": json.dumps(good, ensure_ascii=False), "model_name": "m1", "total_tokens": 1}
@@ -3485,9 +3541,13 @@ def test_mixed_groups_same_event_four_quadrant(tmp_path):
     # 群 A：observed → B-confirm（1 条）；confirmation → C-silence（0 条）
     assert len(by_group.get("qq-group-100000001", [])) == 1
     assert by_group["qq-group-100000001"][0].startswith("✅ Codex 额度重置已确认生效")
-    # 群 B：两个事件都是 A-primary → 全量通知（含 enrichment 与 AI 解读）
+    # 群 B：两个事件都是 A-primary → 全量通知（含 enrichment 与中文翻译）；
+    # observed → 语义标题，非 observed → 普通提醒标题
     assert len(by_group.get("qq-group-100000002", [])) == 2
     assert all("Tibo 原文" in b for b in by_group["qq-group-100000002"])
+    assert all("中文翻译：\n完整中文翻译" in b for b in by_group["qq-group-100000002"])
+    titles = sorted(b.split("\n", 1)[0] for b in by_group["qq-group-100000002"])
+    assert titles == sorted([GLOBAL_CONFIRMED_TITLE, GLOBAL_NOTICE_TITLE])
     # receipt 独立：A 两个 key（1 发送 + 1 handled）；B 两个 key（2 发送）
     assert sorted(_gstate(plugin, "100000001")["notified_keys"]) == [
         "global-declared:2097043464538264003",
@@ -3514,12 +3574,14 @@ def test_confirmation_primary_uses_provider_full_text(tmp_path):
     asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING))  # noqa: SLF001
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 1
-    # observed A-primary：确认型 primary（该群从未收到此事件的通知）
-    assert bodies[0].startswith("✅ Codex 额度重置已确认生效")
-    assert "确认时间：北京时间 9月8日 09:34" in bodies[0]
+    # observed A-primary：语义标题（v0.1.10 无 emoji/确认时间行），该群从未
+    # 收到此事件的通知；正文为统一结构 + provider 完整原文
+    assert bodies[0].startswith(GLOBAL_CONFIRMED_TITLE)
+    assert "确认时间" not in bodies[0]
     assert "Tibo 原文：" in bodies[0] and "Lands around 6pm PST today" in bodies[0]
     assert "Tibo 原文摘录" not in bodies[0]
     assert "已宣告" not in bodies[0]
+    assert f"原帖：https://x.com/thsottiaux/status/2097043464538264003" in bodies[0]
 
 
 def test_confirmation_short_message_omits_unparseable_observed_at(tmp_path):
@@ -3575,9 +3637,9 @@ def test_defer_released_when_forecast_clears(tmp_path):
     asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING, None))  # noqa: SLF001
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 1
-    # observed A-primary → 确认型 primary；providers 全挂 → feed 摘录兜底
-    assert bodies[0].startswith("✅ Codex 额度重置已确认生效")
-    assert "确认时间：北京时间 9月8日 09:34" in bodies[0]
+    # observed A-primary → 语义标题接管；providers 全挂 → feed 摘录兜底
+    assert bodies[0].startswith(GLOBAL_CONFIRMED_TITLE)
+    assert "确认时间" not in bodies[0]
     assert "Tibo 原文摘录：" in bodies[0]
     assert "global-declared:2097043464538264003" in _gstate(plugin)["notified_keys"]
 
@@ -3657,11 +3719,13 @@ def test_duplicate_fingerprint_missing_field_takes_over(tmp_path):
         bodies = asyncio.run(asyncio.wait_for(run_variant(), 10))
         assert len(bodies) == 1, f"variant {i} 应 A-primary 发送"
         if expected_observed:
-            # source=operator-observed → observed=True → 确认型 primary
-            assert bodies[0].startswith("✅ Codex 额度重置已确认生效"), f"variant {i}"
+            # source=operator-observed → observed=True → 语义标题 primary
+            assert bodies[0].startswith(GLOBAL_CONFIRMED_TITLE), f"variant {i}"
 
         else:
-            assert "已宣告" in bodies[0], f"variant {i} 应为 declaration 形态"
+            # 非 observed declaration → 普通提醒标题（v0.1.10：无"已宣告"文案）
+            assert bodies[0].startswith(GLOBAL_NOTICE_TITLE), f"variant {i}"
+            assert "已宣告" not in bodies[0], f"variant {i}"
 
 
 # ===== v0.1.9 修正轮：defer 契约门控 + 并发 receipt 注入回归 =====
@@ -3678,7 +3742,7 @@ def test_defer_contract_gating_invalid_delivery(tmp_path):
     asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING, forecast))  # noqa: SLF001
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 1  # A-primary：未 defer
-    assert "✅ Codex 额度重置已确认生效" in bodies[0]
+    assert bodies[0].startswith(GLOBAL_CONFIRMED_TITLE)
 
 
 def test_defer_contract_gating_missing_alert_event_id(tmp_path):
@@ -3691,7 +3755,7 @@ def test_defer_contract_gating_missing_alert_event_id(tmp_path):
     asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING, forecast))  # noqa: SLF001
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 1  # A-primary：未 defer
-    assert "✅ Codex 额度重置已确认生效" in bodies[0]
+    assert bodies[0].startswith(GLOBAL_CONFIRMED_TITLE)
 
 
 def test_defer_contract_gating_valid_contract_defers(tmp_path):
@@ -3816,3 +3880,286 @@ def test_l4_backfill_requires_explicit_tweet_id_and_valid_contract(tmp_path, ove
     assert calls == {"fx": [], "vx": []}
     assert plugin._ctx.llm.generate_calls == []
     assert plugin._inflight == {}
+
+
+# ===== v0.1.10 Banked 接入全文 + translation-only LLM 后台管线 =====
+
+
+def _banked_fresh_feed(
+    *,
+    tweet_text: str = "The banked reset has landed. Redeem on demand.",
+    with_tweet: bool = True,
+    with_summary: bool = True,
+) -> dict:
+    """合成新鲜 banked 事件（announced_at=现在，48h 护栏内）。"""
+    tweet_id = "999909111111111111"
+    event: dict = {
+        "id": tweet_id,
+        "type": "credits",
+        "reset_kind": "banked",
+        "banked_state": "announced",
+        "url": f"https://x.com/thsottiaux/status/{tweet_id}",
+        "announced_at": datetime.now(timezone.utc).isoformat(),
+        "reason_tags": ["milestone"],
+    }
+    if with_summary:
+        event["summary"] = "Banked reset summary fallback text."
+    feed: dict = {"events": [event], "tweets": []}
+    if with_tweet:
+        feed["tweets"] = [
+            {
+                "id": tweet_id,
+                "text": tweet_text,
+                "at": datetime.now(timezone.utc).isoformat(),
+                "is_reply": False,
+            }
+        ]
+    return feed
+
+
+def test_banked_signal_joins_tweet_at_for_published_at():
+    """v0.1.10：banked 信号结构化 join 发帖时刻（tweet.at）作为 LLM 翻译的
+    published_at 基准；declared 车道语义不变。"""
+    feed = _banked_fresh_feed()
+    signal = next(s for s in signals_from_feed(feed) if s.lane == "banked")
+    assert signal.tweet_at == feed["tweets"][0]["at"]
+    declared = next(
+        s for s in signals_from_feed(_confirmation_feed()) if s.lane == "global_declared"
+    )
+    assert declared.tweet_at  # declared 车道原有行为不变
+
+
+def test_banked_pipeline_full_text_and_translation(tmp_path):
+    """banked 新信号经后台管线：Provider 全文 + LLM 翻译 → 统一结构通知
+    （标题/中文翻译/原文/原帖），单次 provider 请求，receipt 正常落盘。"""
+    plugin = _make_plugin(tmp_path)
+    _gstate(plugin)["feed_baseline_done"] = True
+    _gstate(plugin)["notified_keys"] = []
+    good = {"translation_zh": "Banked reset 已落地，可按需兑换。"}
+
+    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, **kwargs):
+        return {"success": True, "response": json.dumps(good, ensure_ascii=False), "model_name": "m1", "total_tokens": 10}
+
+    plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
+    calls = _wire_providers(plugin, fx=_FX_GOLDEN)
+    feed = _banked_fresh_feed()
+
+    async def run_and_drain():
+        await plugin._process_feed_signals(feed, ["100000001"], BEIJING)
+        await _drain_inflight(plugin)
+
+    asyncio.run(run_and_drain())
+    bodies = [b for _, b in plugin._ctx.send.sent_messages]
+    assert len(bodies) == 1
+    body = bodies[0]
+    assert body.startswith(BANKED_NOTICE_TITLE)
+    assert "中文翻译：\nBanked reset 已落地，可按需兑换。" in body
+    # Provider 全文获胜（feed 推文只是 unknown 候选，fx full 立即采用）
+    assert "Tibo 原文：\n" in body and "Lands around 6pm PST today" in body
+    assert "Tibo 原文摘录" not in body
+    assert "原帖：https://x.com/thsottiaux/status/999909111111111111" in body
+    assert len(calls["fx"]) == 1 and calls["vx"] == []
+    assert "banked:999909111111111111:announced" in _gstate(plugin)["notified_keys"]
+
+
+def test_banked_pipeline_passes_published_at_to_llm(tmp_path):
+    """banked 管线把 tweet.at 作为 published_at 传入 LLM 元数据。"""
+    plugin = _make_plugin(tmp_path)
+    _gstate(plugin)["feed_baseline_done"] = True
+    _gstate(plugin)["notified_keys"] = []
+    captured: dict = {}
+
+    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, **kwargs):
+        captured["messages"] = prompt
+        return {"success": True, "response": json.dumps({"translation_zh": "译"}, ensure_ascii=False), "model_name": "m1", "total_tokens": 1}
+
+    plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
+    _wire_providers(plugin, fx=_FX_GOLDEN)
+    feed = _banked_fresh_feed()
+
+    async def run_and_drain():
+        await plugin._process_feed_signals(feed, ["100000001"], BEIJING)
+        await _drain_inflight(plugin)
+
+    asyncio.run(run_and_drain())
+    joined = "".join(str(m.get("content", "")) for m in captured["messages"])
+    assert f"published_at: {feed['tweets'][0]['at']}" in joined
+    assert "current_time: " in joined and "target_timezone: Asia/Shanghai" in joined
+
+
+def test_banked_enrichment_failure_still_sends_without_translation(tmp_path):
+    """providers 全挂 + feed 无匹配推文 → summary 兜底（摘录措辞）；
+    LLM 禁用 → 无中文翻译块；通知照发、receipt 照落（绝不漏报）。"""
+    plugin = _llm_plugin(tmp_path, llm_overrides={"enabled": False})
+    _wire_providers(plugin, fx=None, vx=None)  # providers 全挂（覆盖 _llm_plugin 默认）
+    _gstate(plugin)["feed_baseline_done"] = True
+    _gstate(plugin)["notified_keys"] = []
+    feed = _banked_fresh_feed(with_tweet=False)  # feed 无匹配推文 → summary 兜底
+
+    async def run_and_drain():
+        await plugin._process_feed_signals(feed, ["100000001"], BEIJING)
+        await _drain_inflight(plugin)
+
+    asyncio.run(run_and_drain())
+    bodies = [b for _, b in plugin._ctx.send.sent_messages]
+    assert len(bodies) == 1
+    body = bodies[0]
+    assert body.startswith(BANKED_NOTICE_TITLE)
+    assert "中文翻译" not in body  # LLM 禁用 → 无翻译块
+    assert "Tibo 原文摘录：\nBanked reset summary fallback text." in body
+    assert "原帖：https://x.com/thsottiaux/status/999909111111111111" in body
+    assert "banked:999909111111111111:announced" in _gstate(plugin)["notified_keys"]
+
+
+def test_banked_all_text_sources_missing_still_sends(tmp_path):
+    """providers/summary 全缺失 → 仅标题 + 原帖的极简 banked 通知照发。"""
+    plugin = _llm_plugin(tmp_path, llm_overrides={"enabled": False})
+    _wire_providers(plugin, fx=None, vx=None)
+    _gstate(plugin)["feed_baseline_done"] = True
+    _gstate(plugin)["notified_keys"] = []
+    feed = _banked_fresh_feed(with_tweet=False, with_summary=False)
+
+    async def run_and_drain():
+        await plugin._process_feed_signals(feed, ["100000001"], BEIJING)
+        await _drain_inflight(plugin)
+
+    asyncio.run(run_and_drain())
+    bodies = [b for _, b in plugin._ctx.send.sent_messages]
+    assert bodies == [
+        BANKED_NOTICE_TITLE + "\n\n原帖：https://x.com/thsottiaux/status/999909111111111111"
+    ]
+    assert "banked:999909111111111111:announced" in _gstate(plugin)["notified_keys"]
+
+
+def test_banked_multi_group_shared_enrichment(tmp_path):
+    """同一 banked 事件多群：全文与 LLM 各只一次，两群复用同一内容。"""
+    plugin = _make_plugin(tmp_path, group_id="", group_ids=["100000001", "100000002"])
+    for gid in ("100000001", "100000002"):
+        _gstate(plugin, gid)["feed_baseline_done"] = True
+    good = {"translation_zh": "共享翻译"}
+
+    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, **kwargs):
+        return {"success": True, "response": json.dumps(good, ensure_ascii=False), "model_name": "m1", "total_tokens": 1}
+
+    plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
+    calls = _wire_providers(plugin, fx=_FX_GOLDEN)
+    feed = _banked_fresh_feed()
+
+    async def run_and_drain():
+        await plugin._process_feed_signals(feed, ["100000001", "100000002"], BEIJING)
+        await _drain_inflight(plugin)
+
+    asyncio.run(run_and_drain())
+    bodies = [b for _, b in plugin._ctx.send.sent_messages]
+    assert len(bodies) == 2 and bodies[0] == bodies[1]
+    assert "中文翻译：\n共享翻译" in bodies[0]
+    assert len(calls["fx"]) == 1 and calls["vx"] == []
+    for gid in ("100000001", "100000002"):
+        assert "banked:999909111111111111:announced" in _gstate(plugin, gid)["notified_keys"]
+
+
+def test_banked_send_failure_retries_only_failed_group(tmp_path):
+    """A 成 / B 败 → 下一轮仅 B 补发；A 零重复；重试重新 enrich 属预期。"""
+    plugin = _make_plugin(tmp_path, group_id="", group_ids=["100000001", "100000002"])
+    for gid in ("100000001", "100000002"):
+        _gstate(plugin, gid)["feed_baseline_done"] = True
+    sent: list[str] = []
+    fx_rounds = {"n": 0}
+
+    async def flaky_send(group_id: str, message: str) -> bool:
+        if group_id == "100000002" and fx_rounds["n"] == 1:
+            return False  # 首轮 B 失败
+        sent.append(group_id)
+        return True
+
+    plugin._send_group_text = flaky_send  # type: ignore[method-assign]
+
+    async def counting_get(url: str, timeout_seconds: int):
+        if "api.fxtwitter.com" in url:
+            fx_rounds["n"] += 1
+            return _FX_GOLDEN
+        return None
+
+    plugin._get_json = counting_get  # type: ignore[method-assign]
+    feed = _banked_fresh_feed()
+
+    async def round_and_drain():
+        await plugin._process_feed_signals(feed, ["100000001", "100000002"], BEIJING)
+        await _drain_inflight(plugin)
+
+    asyncio.run(round_and_drain())
+    assert sent == ["100000001"]
+    asyncio.run(round_and_drain())
+    assert sent == ["100000001", "100000002"]
+    assert fx_rounds["n"] == 2  # 重试允许再次 fetch（与 L4 一致）
+    assert "banked:999909111111111111:announced" in _gstate(plugin, "100000001")["notified_keys"]
+    assert "banked:999909111111111111:announced" in _gstate(plugin, "100000002")["notified_keys"]
+
+
+def test_banked_inflight_dedup_single_pipeline(tmp_path):
+    """同一 banked 事件管线在途时，下一轮调度不得重复启动（单群单请求）。"""
+    plugin = _make_plugin(tmp_path)
+    _gstate(plugin)["feed_baseline_done"] = True
+    _gstate(plugin)["notified_keys"] = []
+    release = asyncio.Event()
+    fx_calls = {"n": 0}
+
+    async def hanging_get(url: str, timeout_seconds: int):
+        if "api.fxtwitter.com" in url:
+            fx_calls["n"] += 1
+            await release.wait()
+            return _FX_GOLDEN
+        return None
+
+    plugin._get_json = hanging_get  # type: ignore[method-assign]
+    feed = _banked_fresh_feed()
+
+    async def scenario():
+        await plugin._process_feed_signals(feed, ["100000001"], BEIJING)
+        assert list(plugin._inflight.keys()) == [
+            "banked-primary:banked:999909111111111111:announced"
+        ]
+        await plugin._process_feed_signals(feed, ["100000001"], BEIJING)  # inflight 命中
+        assert fx_calls["n"] == 0  # 未重复启动管线
+        release.set()
+        await _drain_inflight(plugin)
+
+    asyncio.run(asyncio.wait_for(scenario(), 5))
+    assert fx_calls["n"] == 1 and len(plugin._ctx.send.sent_messages) == 1
+
+
+def test_banked_midflight_receipt_prevents_double_send(tmp_path):
+    """send-time receipt 重查：管线在途时该群 receipt 已被记录 → 跳过发送
+    且不重复落盘（防并发重复投递）。"""
+    plugin = _make_plugin(tmp_path)
+    _gstate(plugin)["feed_baseline_done"] = True
+    _gstate(plugin)["notified_keys"] = []
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def hanging_get(url: str, timeout_seconds: int):
+        if "api.fxtwitter.com" in url:
+            entered.set()
+            await release.wait()
+            return _FX_GOLDEN
+        return None
+
+    plugin._get_json = hanging_get  # type: ignore[method-assign]
+    feed = _banked_fresh_feed()
+    key = "banked:999909111111111111:announced"
+
+    async def scenario():
+        await plugin._process_feed_signals(feed, ["100000001"], BEIJING)
+        await asyncio.wait_for(entered.wait(), 2)
+        # 管线等待期间 receipt 被并发写入（模拟另一路径先落盘）
+        async with plugin._state_lock:
+            _gstate(plugin)["notified_keys"] = sorted(
+                set(_gstate(plugin)["notified_keys"]) | {key}
+            )
+            plugin._save_state()
+        release.set()
+        await _drain_inflight(plugin)
+
+    asyncio.run(asyncio.wait_for(scenario(), 5))
+    assert plugin._ctx.send.sent_messages == []  # send-time 重查命中：0 发送
+    assert _gstate(plugin)["notified_keys"] == [key]
