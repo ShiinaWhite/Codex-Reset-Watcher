@@ -142,6 +142,13 @@ v0.1.10 Notification UX / translation-only 管线重构：
   发送 QQ 通知（独立预告/时间更新消失）；保留只读观察日志与终态
   active_plan 清理。``_maybe_notify`` 及三个 Tibo formatter 暂留
   （死代码，回滚参考），生产路径不再调用。
+- review-fix（来源边界）：forecast/event summary 是上游摘要而非逐字
+  Tibo 原文——不冒充「原文/摘录」展示，也不作为 LLM 翻译输入；仅剩
+  summary 可用时告警以标题+原帖发送，receipt 照常落盘。enrichment
+  链收紧为 fxtwitter → vxtwitter → feed 同 id 推文 → 无正文。
+  official_signal.at 缺失时，L4 仅以 feed 同 id 推文的 tweet.at 兜底
+  LLM published_at（纯 enrichment 元数据，不触碰触发/去重/receipt/
+  backfill/分类/defer 语义）。
 
 上游未形成面向用户的 alerts 告警时保持静默；插件不自行创造告警——
 不自行 NLP 猜测，也不对上游已形成的 alerts 告警做二次语义审核。
@@ -203,15 +210,16 @@ CONTRACT_PROMPT = """你是 Codex 额度重置通知的固定翻译模块。用�
    - 将能够可靠确定的时间表达自然换算成北京时间（Asia/Shanghai）；
    - today / tomorrow / tonight / in ~3 hours 等相对时间，以推文发布时间 published_at 为解释基准；
    - current_time 仅用于让译文中的「今天 / 明天 / 具体日期」措辞更自然，不得改变原文相对时间的实际含义；
-   - 正确理解 PST / PDT / PT 等时区缩写，并结合推文日期处理标准时/夏令时；
+   - 正确理解时区缩写：PST 即 UTC-8；PDT 即 UTC-7；单独的 PT 则根据 published_at 的日期按太平洋时间判断标准时/夏令时；
+   - 不得因为日期处于夏令时，就把原文明写的 PST 重新解释成 PDT；
    - 保留 around / approximately / ~ 等模糊程度（如「左右」「大约」）；
-   - 时间或时区信息不足时不要猜测，保留原文时间表达原样。
+   - 时间或时区信息不足时，仍正常翻译原有时间表达，但不要擅自补北京时间、时区或具体日期。
 4. 元数据中 content_completeness 不是 full 时，输入可能只是部分原文：对可见部分照常完整翻译；缺失不代表原文没有，不要补写原文中不存在的内容，也不要做否定性结论。
 5. Banked Reset 相关内容指「存入账户、供之后使用/兑换的 reset 机会」：译文中不得把 Banked Reset 表达为当前额度已经自动刷新；除此之外严格按原文翻译，不添加原文没有的 Banked 解释。
 6. 只输出一个 JSON 对象，字段固定为：
 {"translation_zh": string}
 不要输出 JSON 以外的任何内容（不要 markdown 代码块标记，不要解释）。
-7. 译文中不得讨论或提及插件内部的数据来源、Provider、API、抓取方式或任何实现细节——这些不属于翻译对象。"""
+7. 不得把插件元数据、Provider、API、数据来源等实现细节额外添加进译文；如果 <SOURCE_TEXT> 原文本身明确提到这些词或概念，必须忠实翻译。"""
 
 # Tibo 前端真实状态集合（见 tibo app.js + API 实测）。
 # SCHEDULED / TIME_CHANGED 表示"未来有计划"（近似与否见 Conclusion.approximate）。
@@ -1803,7 +1811,7 @@ class CodexResetWatcher(MaiBotPlugin):
         """
         banked_key = f"banked-primary:{signal.key}"
         try:
-            content = await self._enrich_content(signal.event_id, signal.summary, feed)
+            content = await self._enrich_content(signal.event_id, feed)
             published_at = (
                 signal.tweet_at
                 or (
@@ -1914,7 +1922,12 @@ class CodexResetWatcher(MaiBotPlugin):
         """
         try:
             content = await self._enrich_tweet_content({"official_signal": osig}, feed)
-            translation = await self._llm_translate(osig, content)
+            translation = await self._llm_translate_content(
+                osig_tweet_id,
+                str(osig.get("url") or "").strip(),
+                self._l4_published_at(osig, osig_tweet_id, feed),
+                content,
+            )
             message = build_full_notice(
                 GLOBAL_NOTICE_TITLE,
                 osig.get("url"),
@@ -1955,17 +1968,29 @@ class CodexResetWatcher(MaiBotPlugin):
         finally:
             self._inflight.pop(key, None)
 
-    async def _llm_translate(
-        self, osig: dict[str, Any], content: TweetContent | None
-    ) -> str | None:
-        """L4 路径包装：从 official_signal 提取元数据后进入共用翻译核心。"""
-        osig = osig if isinstance(osig, dict) else {}
-        return await self._llm_translate_content(
-            str(osig.get("tweet_id") or "").strip(),
-            str(osig.get("url") or "").strip(),
-            str(osig.get("at") or "").strip(),
-            content,
-        )
+    @staticmethod
+    def _l4_published_at(osig: dict[str, Any], tweet_id: str, feed: Any) -> str:
+        """L4 published_at（review-fix，纯展示层 enrichment 元数据）：
+
+        official_signal.at 优先；缺失且 feed.tweets[] 存在同 id 推文时
+        回退该推文的 tweet.at；两者皆缺 → unknown。本值只进入 LLM 翻译
+        元数据，绝不参与 L4 触发契约、去重、receipt、backfill、A/B/C
+        分类或 defer 语义。
+        """
+        at = str(osig.get("at") or "").strip()
+        if at:
+            return at
+        if tweet_id and isinstance(feed, dict):
+            for tweet in feed.get("tweets") or []:
+                if (
+                    isinstance(tweet, dict)
+                    and str(tweet.get("id") or "") == tweet_id
+                ):
+                    candidate = str(tweet.get("at") or "").strip()
+                    if candidate:
+                        return candidate
+                    break
+        return "unknown"
 
     async def _llm_translate_content(
         self,
@@ -2089,36 +2114,43 @@ class CodexResetWatcher(MaiBotPlugin):
     async def _enrich_tweet_content(
         self, forecast: Any, feed: Any = None
     ) -> TweetContent | None:
-        """alert 已成立后的 Tibo 原文补全（v0.1.7）。
+        """alert 已成立后的 Tibo 原文补全（v0.1.7；review-fix 收紧来源）。
 
         选择策略：provider 返回 full → 立即采用；返回 unknown 只作为
         best candidate 保留并继续尝试下一 provider；两个 provider 之后，
-        再与 feed / forecast 兜底比较，保留最优可得文本
+        再与 feed 同 id 推文比较，保留最优可得真实文本
         （_better_content：full 优先于 unknown，同级取更长文本）。
 
-        降级链：fxtwitter → vxtwitter → feed 匹配推文 → forecast summary
-        → None（调用方仍正常发送统一结构通知）。
+        降级链：fxtwitter → vxtwitter → feed 匹配推文 → None。
+        official_signal.summary 是上游摘要而非逐字 Tibo 原文：不展示、
+        不进入 LLM 输入（review-fix）；无正文时调用方发送标题/原帖。
 
         - 只在至少一个群待发送时被调用（见 _process_upstream_alert）；
         - 任何失败/超时/JSON 异常都降级到下一级，绝不抛出、绝不阻塞告警；
         - 时间预算：单 provider 10.0s、最多两个 provider（≈20s 上限），
           无重试、无退避；
         - 本方法只影响文案，不参与触发/去重/receipt/重试判定；
-        - TweetContent.text 始终为 provider/来源的完整正文（不在内容层裁剪）。
+        - TweetContent.text 始终为来源的完整正文（不在内容层裁剪）。
         """
         osig = forecast.get("official_signal") if isinstance(forecast, dict) else None
         osig = osig if isinstance(osig, dict) else {}
         tweet_id = str(osig.get("tweet_id") or "").strip() or _status_id(
             osig.get("url")
         )
-        fallback_summary = str(osig.get("summary") or "").strip()
-        return await self._enrich_content(tweet_id, fallback_summary, feed)
+        return await self._enrich_content(tweet_id, feed)
 
     async def _enrich_content(
-        self, tweet_id: str, fallback_summary: str, feed: Any = None
+        self, tweet_id: str, feed: Any = None
     ) -> TweetContent | None:
-        """可复用 enrichment 核心：L4（official_signal）与 L1 A-primary
-        （declared event）共用同一 provider→feed→fallback 降级链。"""
+        """可复用 enrichment 核心（review-fix：summary 退出正文来源）：
+        L4（official_signal）与 L1 A-primary / Banked 管线共用同一
+        provider→feed 降级链。
+
+        来源边界：fxtwitter / vxtwitter / feed 同 id 推文文本是真实
+        Tweet 原文，可进入「Tibo 原文/摘录」展示与 LLM 翻译；
+        forecast summary / event summary 是上游摘要而非逐字原文——
+        绝不冒充 Tibo 原文/摘录展示，也绝不作为翻译输入。
+        """
         best: TweetContent | None = None
         if tweet_id:
             providers = (
@@ -2156,7 +2188,8 @@ class CodexResetWatcher(MaiBotPlugin):
                     len(content.text),
                     elapsed,
                 )
-        # feed / forecast 兜底：与既有候选比较取优，而非机械取先到者
+        # feed 同 id 推文兜底（真实 Tweet 文本）：与既有候选比较取优，
+        # 而非机械取先到者。
         if tweet_id and isinstance(feed, dict):
             for tweet in feed.get("tweets") or []:
                 if (
@@ -2173,16 +2206,13 @@ class CodexResetWatcher(MaiBotPlugin):
                             len(text),
                         )
                     break
-        if fallback_summary:
-            best = _better_content(
-                best, TweetContent(fallback_summary, "forecast", "unknown")
-            )
-            logger.info(
-                "Tweet 全文：provider=forecast completeness=unknown len=%d（候选比较）",
-                len(fallback_summary),
-            )
+        # review-fix：forecast/event summary 是摘要而非逐字原文——
+        # 不再作为兜底候选（不展示、不翻译）。
         if best is None:
-            logger.info("Tweet 全文：所有文本源缺失，仅发送统一结构通知（无正文块）")
+            logger.info(
+                "Tweet 全文：无可用的真实推文文本，仅发送标题/原帖"
+                "（不展示摘要、不交给 LLM）"
+            )
         else:
             logger.info(
                 "Tweet 全文：采用 provider=%s completeness=%s len=%d",
@@ -2343,7 +2373,7 @@ class CodexResetWatcher(MaiBotPlugin):
             observed = is_observed_declaration(
                 signal.observation_result, signal.source, signal.observed_at,
             )
-            content = await self._enrich_content(signal.event_id, signal.summary, feed)
+            content = await self._enrich_content(signal.event_id, feed)
             translation = await self._llm_translate_content(
                 signal.event_id,
                 signal.url,

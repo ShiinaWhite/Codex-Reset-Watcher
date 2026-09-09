@@ -1065,6 +1065,26 @@ def test_contract_prompt_banked_safety_is_translation_constraint():
         assert retired not in CONTRACT_PROMPT
 
 
+def test_contract_prompt_timezone_and_boundary_rules():
+    """review-fix 契约文本：PST/PDT 固定偏移与 PT 判定规则、不得改写原文
+    明写的时区缩写、实现细节词的忠实翻译边界、信息不足时的翻译行为。"""
+    # 时区缩写：固定偏移明写；PT 按 published_at 日期判断
+    assert "PST 即 UTC-8" in CONTRACT_PROMPT
+    assert "PDT 即 UTC-7" in CONTRACT_PROMPT
+    assert "单独的 PT 则根据 published_at 的日期按太平洋时间判断标准时/夏令时" in CONTRACT_PROMPT
+    # 不得把原文明写的 PST 擅自重解释为 PDT
+    assert "不得因为日期处于夏令时，就把原文明写的 PST 重新解释成 PDT" in CONTRACT_PROMPT
+    # 实现细节：不得额外添加进译文；原文本身明确提到则必须忠实翻译
+    assert "不得把插件元数据、Provider、API、数据来源等实现细节额外添加进译文" in CONTRACT_PROMPT
+    assert "如果 <SOURCE_TEXT> 原文本身明确提到这些词或概念，必须忠实翻译" in CONTRACT_PROMPT
+    # 信息不足：仍正常翻译原表达，但不擅自补北京时间/时区/具体日期
+    assert "时间或时区信息不足时，仍正常翻译原有时间表达" in CONTRACT_PROMPT
+    assert "不要擅自补北京时间、时区或具体日期" in CONTRACT_PROMPT
+    # 旧措辞退役
+    assert "保留原文时间表达原样" not in CONTRACT_PROMPT
+    assert "译文中不得讨论或提及插件内部的数据来源" not in CONTRACT_PROMPT
+
+
 def test_banked_available_never_claimed_auto_refresh_in_contract():
     """available 红线（v0.1.10 起在 Contract 层强制）：Contract 明确 Banked
     Reset 是存入账户、供之后使用/兑换的机会。真实 available 推文原文
@@ -2548,10 +2568,20 @@ def test_both_providers_fail_uses_feed_text(tmp_path):
     assert len(calls["fx"]) == 1 and len(calls["vx"]) == 1  # 顺序：先 fx 后 vx
 
 
-def test_provider_and_feed_fail_uses_forecast_summary(tmp_path):
-    """providers 与 feed 全不可用（feed 无匹配推文）→ forecast summary。"""
+def test_l4_summary_only_never_displayed_nor_translated(tmp_path):
+    """review-fix 回归：providers 与 feed 全不可用（feed 无匹配推文）时，
+    official_signal.summary 是上游摘要而非逐字 Tibo 原文——不得展示、
+    不得交给 LLM；告警仍发标题+原帖，receipt 正常落盘。"""
     plugin = _make_plugin(tmp_path)
-    _wire_providers(plugin, fx=None, vx=None)
+    _gstate(plugin)["feed_baseline_done"] = True
+    llm_calls = {"n": 0}
+
+    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, **kwargs):
+        llm_calls["n"] += 1
+        return {"success": True, "response": json.dumps({"translation_zh": "不应出现的翻译"}, ensure_ascii=False), "model_name": "m1", "total_tokens": 1}
+
+    plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
+    calls = _wire_providers(plugin, fx=None, vx=None)
     feed = {"tweets": [{"id": "999", "text": "无关推文"}]}
     asyncio.run(
         plugin._process_upstream_alert(
@@ -2560,8 +2590,16 @@ def test_provider_and_feed_fail_uses_forecast_summary(tmp_path):
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 1
-    assert "Tibo 原文摘录：" in bodies[0]
-    assert "Never gonna give you up" in bodies[0]  # forecast summary 兜底
+    assert bodies[0] == (
+        f"{GLOBAL_NOTICE_TITLE}\n\n原帖：https://x.com/thsottiaux/status/2097043464538264003"
+    )
+    assert "Never gonna give you up" not in bodies[0]  # summary 不冒充原文/摘录
+    assert "Tibo 原文" not in bodies[0]
+    assert len(calls["fx"]) == 1 and len(calls["vx"]) == 1  # 真实来源仍被尝试
+    assert llm_calls["n"] == 0  # summary 不交给 LLM
+    assert _gstate(plugin)["upstream_alert_keys"] == [
+        "upstream-alert:signal:2097043464538264003:likely"
+    ]  # receipt 正常落盘（alert decision 不变）
 
 
 def test_all_text_sources_missing_still_sends(tmp_path):
@@ -2780,8 +2818,9 @@ def test_fx_unknown_shorter_vx_unknown_longer_takes_vx(tmp_path):
     assert ("v" * 280) in bodies[0] and ("f" * 100) not in bodies[0]
 
 
-def test_fx_unknown_beats_shorter_forecast_fallback(tmp_path):
-    """fx unknown 候选与更短的 forecast summary 比较 → 保留 fx。"""
+def test_fx_unknown_kept_when_no_better_source(tmp_path):
+    """fx unknown 候选保留为最优可得真实文本（review-fix：summary 不再
+    参与候选比较；无更优来源时 fx 文本以「摘录」措辞展示）。"""
     fx_unknown = {"tweet": {"text": "f" * 280, "is_note_tweet": True}}
     plugin = _make_plugin(tmp_path)
     _wire_providers(plugin, fx=fx_unknown, vx=None)
@@ -2791,11 +2830,14 @@ def test_fx_unknown_beats_shorter_forecast_fallback(tmp_path):
         )
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
-    assert ("f" * 280) in bodies[0]  # 更长的 fx 候选胜过 39 字 summary
+    assert ("f" * 280) in bodies[0]  # fx 真实文本保留
     assert "Tibo 原文摘录：" in bodies[0]
+    assert "Never gonna give you up" not in bodies[0]  # summary 不冒充原文
+
 
 def test_feed_fallback_requires_matching_tweet_id(tmp_path):
-    """feed 中无匹配 tweet_id → 不得误用无关推文，继续降级 forecast。"""
+    """feed 中无匹配 tweet_id → 不得误用无关推文；仅剩 summary 时不展示、
+    不翻译，告警以标题+原帖发送（review-fix）。"""
     plugin = _make_plugin(tmp_path)
     _wire_providers(plugin, fx=None, vx=None)
     feed = {"tweets": [{"id": "111", "text": "无关推文"}]}
@@ -2807,7 +2849,10 @@ def test_feed_fallback_requires_matching_tweet_id(tmp_path):
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 1
     assert "无关推文" not in bodies[0]
-    assert "Never gonna give you up" in bodies[0]  # forecast summary 兜底
+    assert "Never gonna give you up" not in bodies[0]  # summary 不冒充原文
+    assert bodies[0] == (
+        f"{GLOBAL_NOTICE_TITLE}\n\n原帖：https://x.com/thsottiaux/status/2097043464538264003"
+    )
 
 
 # ===== v0.1.8 LLM enrichment（总预算状态机 / inflight / state 锁 / JSON 管道）=====
@@ -3381,11 +3426,83 @@ def test_llm_prompt_contains_no_internal_provider_terms(tmp_path):
     assert "target_timezone: Asia/Shanghai" in joined
     assert "Asia/Shanghai" in CONTRACT_PROMPT
     assert "published_at" in CONTRACT_PROMPT and "current_time" in CONTRACT_PROMPT
-    # 相对时间基准 / 不猜测 / 保留模糊词 / 不输出独立时间字段
-    for keyword in ("相对时间", "不要单独输出时间字段", "不要猜测", "around / approximately / ~"):
+    # 相对时间基准 / 不擅自补全 / 保留模糊词 / 不输出独立时间字段
+    for keyword in (
+        "相对时间",
+        "不要单独输出时间字段",
+        "不要擅自补北京时间、时区或具体日期",
+        "around / approximately / ~",
+    ):
         assert keyword in CONTRACT_PROMPT, keyword
     for term in ("fxtwitter", "vxtwitter", "content_source", "forecast", "api.fxtwitter.com"):
         assert term not in joined, term
+
+
+def test_l4_published_at_falls_back_to_feed_tweet_at(tmp_path):
+    """review-fix：official_signal.at 缺失但 feed.tweets[] 有同 id 推文
+    的 at → LLM 元数据 published_at 回退 tweet.at。仅影响 enrichment
+    元数据，不影响 L4 触发/去重/receipt。"""
+    plugin = _llm_plugin(tmp_path)
+    captured: dict = {}
+
+    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, rpc_timeout_ms=None, **kwargs):
+        captured["messages"] = prompt
+        return {"success": True, "response": json.dumps({"translation_zh": "译"}, ensure_ascii=False), "model_name": "m1", "total_tokens": 1}
+
+    plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
+    feed = {"tweets": [{"id": "2097043464538264003", "at": "2026-09-07T19:00:00.000Z"}]}
+    asyncio.run(
+        plugin._process_upstream_alert(
+            {"official_signal": _osig(at="")}, ["100000001"], feed  # noqa: SLF001
+        )
+    )
+    joined = "".join(str(m.get("content", "")) for m in captured["messages"])
+    assert "published_at: 2026-09-07T19:00:00.000Z" in joined  # feed tweet.at 兜底
+    # receipt 照常落盘（去重/receipt 语义不变）
+    assert _gstate(plugin)["upstream_alert_keys"] == [
+        "upstream-alert:signal:2097043464538264003:likely"
+    ]
+
+
+def test_l4_published_at_unknown_when_no_at_anywhere(tmp_path):
+    """official_signal.at 与 feed 同 id 推文 at 均缺失 → published_at=unknown
+    （不得编造）。"""
+    plugin = _llm_plugin(tmp_path)
+    captured: dict = {}
+
+    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, rpc_timeout_ms=None, **kwargs):
+        captured["messages"] = prompt
+        return {"success": True, "response": json.dumps({"translation_zh": "译"}, ensure_ascii=False), "model_name": "m1", "total_tokens": 1}
+
+    plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
+    feed = {"tweets": [{"id": "2097043464538264003", "text": "x"}]}  # 无 at
+    asyncio.run(
+        plugin._process_upstream_alert(
+            {"official_signal": _osig(at="")}, ["100000001"], feed  # noqa: SLF001
+        )
+    )
+    joined = "".join(str(m.get("content", "")) for m in captured["messages"])
+    assert "published_at: unknown" in joined
+
+
+def test_l4_published_at_prefers_official_signal_at(tmp_path):
+    """official_signal.at 存在时不读 feed（osig.at 优先，行为与 v0.1.9 一致）。"""
+    plugin = _llm_plugin(tmp_path)
+    captured: dict = {}
+
+    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, rpc_timeout_ms=None, **kwargs):
+        captured["messages"] = prompt
+        return {"success": True, "response": json.dumps({"translation_zh": "译"}, ensure_ascii=False), "model_name": "m1", "total_tokens": 1}
+
+    plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
+    feed = {"tweets": [{"id": "2097043464538264003", "at": "2026-09-07T19:00:00.000Z"}]}
+    asyncio.run(
+        plugin._process_upstream_alert(
+            {"official_signal": _osig()}, ["100000001"], feed  # noqa: SLF001
+        )
+    )
+    joined = "".join(str(m.get("content", "")) for m in captured["messages"])
+    assert "published_at: 2026-09-07T19:24:57.000Z" in joined  # osig.at 优先
 
 
 def test_config_update_race_no_orphan_alert_task(tmp_path):
@@ -3987,14 +4104,15 @@ def test_banked_pipeline_passes_published_at_to_llm(tmp_path):
     assert "current_time: " in joined and "target_timezone: Asia/Shanghai" in joined
 
 
-def test_banked_enrichment_failure_still_sends_without_translation(tmp_path):
-    """providers 全挂 + feed 无匹配推文 → summary 兜底（摘录措辞）；
-    LLM 禁用 → 无中文翻译块；通知照发、receipt 照落（绝不漏报）。"""
-    plugin = _llm_plugin(tmp_path, llm_overrides={"enabled": False})
+def test_banked_summary_only_sends_without_body_or_translation(tmp_path):
+    """review-fix 回归：providers 全挂 + feed 无匹配推文 → 仅剩 event
+    summary 可用时，summary 不展示、不交给 LLM；告警仍发标题+原帖，
+    receipt 正常落盘（绝不漏报，alert decision 不变）。"""
+    plugin = _llm_plugin(tmp_path, llm_overrides={"enabled": True})
     _wire_providers(plugin, fx=None, vx=None)  # providers 全挂（覆盖 _llm_plugin 默认）
     _gstate(plugin)["feed_baseline_done"] = True
     _gstate(plugin)["notified_keys"] = []
-    feed = _banked_fresh_feed(with_tweet=False)  # feed 无匹配推文 → summary 兜底
+    feed = _banked_fresh_feed(with_tweet=False)  # feed 无匹配推文 → 仅剩 summary
 
     async def run_and_drain():
         await plugin._process_feed_signals(feed, ["100000001"], BEIJING)
@@ -4004,10 +4122,12 @@ def test_banked_enrichment_failure_still_sends_without_translation(tmp_path):
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 1
     body = bodies[0]
-    assert body.startswith(BANKED_NOTICE_TITLE)
-    assert "中文翻译" not in body  # LLM 禁用 → 无翻译块
-    assert "Tibo 原文摘录：\nBanked reset summary fallback text." in body
-    assert "原帖：https://x.com/thsottiaux/status/999909111111111111" in body
+    assert body == (
+        f"{BANKED_NOTICE_TITLE}\n\n原帖：https://x.com/thsottiaux/status/999909111111111111"
+    )
+    assert "Banked reset summary fallback text." not in body  # summary 不冒充原文
+    assert "Tibo 原文" not in body and "中文翻译" not in body
+    assert plugin._ctx.llm.generate_calls == []  # summary 不交给 LLM
     assert "banked:999909111111111111:announced" in _gstate(plugin)["notified_keys"]
 
 
