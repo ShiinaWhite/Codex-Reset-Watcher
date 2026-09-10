@@ -2,7 +2,7 @@
 
 这是一个 MaiBot 插件，自动盯守 OpenAI Codex 的额度重置动态，并把提醒发到你指定的 QQ 群里。
 
-- 当前版本：**0.1.10**
+- 当前版本：**0.1.11**
 - 运行环境：MaiBot（Host 1.0.0 – 1.2.99，SDK 2.8.0 – 2.99.99，以插件清单声明为准）
 - 许可证：MIT
 
@@ -42,7 +42,7 @@ timezone = "Asia/Shanghai"
 
 [llm]
 enabled = true            # 中文翻译开关
-model_task = "replyer"    # 复用 MaiBot 的哪个模型任务
+model_task = "replyer"    # 模型任务：WebUI 提供 replyer / planner / utils 推荐单选
 ```
 
 完整默认值见 [config.toml](codex_reset_watcher/config.toml)。
@@ -81,7 +81,7 @@ model_task = "replyer"    # 复用 MaiBot 的哪个模型任务
 
 ## 版本与兼容性
 
-- 当前版本 **0.1.10**；
+- 当前版本 **0.1.11**；
 - 插件清单声明的兼容范围为 MaiBot Host `1.0.0 – 1.2.99`、SDK `2.8.0 – 2.99.99`。这是清单声明范围，不代表所有中间版本都经过实测；在你的环境遇到问题欢迎提 Issue。
 
 ## 问题反馈与许可
