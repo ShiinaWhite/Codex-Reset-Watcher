@@ -1281,6 +1281,9 @@ class CodexResetWatcher(MaiBotPlugin):
     """Codex 额度重置提醒插件（feed 主源 + Tibo 精确时间辅助）。"""
 
     config_model = CodexResetWatcherConfig
+    # 订阅 Host 全局 model 配置热重载广播（SDK 仅支持 bot/model 两类）：
+    # 模型任务列表变化时异步刷新 model_task 下拉候选缓存（只读 RPC）。
+    config_reload_subscriptions = ("model",)
 
     def __init__(self) -> None:
         super().__init__()
@@ -1295,6 +1298,9 @@ class CodexResetWatcher(MaiBotPlugin):
         # inflight 值为结构化元数据：{task, kind(l4|l1), tweet_id, groups}
         self._inflight: dict[str, dict[str, Any]] = {}
         self._llm_semaphore = asyncio.Semaphore(1)
+        # model_task 下拉候选缓存（v0.1.11）：来自 Host get_available_models；
+        # None = 尚未获取（schema 层退化为当前配置值）。绝不静态硬编码任务名。
+        self._llm_task_choices: list[str] | None = None
 
     async def on_load(self) -> None:
         self._load_state()
@@ -1302,12 +1308,34 @@ class CodexResetWatcher(MaiBotPlugin):
         self._start_task()
         await self._validate_llm_task_on_load()
 
-    async def _validate_llm_task_on_load(self) -> None:
-        """启动只读校验（v0.1.8 补齐设计承诺）：确认配置的 model_task
-        在 Host 模型任务列表中。
+    @staticmethod
+    def _normalize_task_choices(models: Any) -> list[str]:
+        """Host 任务名列表 → 下拉候选：strip / 去空 / 保序去重（纯函数）。"""
+        choices: list[str] = []
+        if isinstance(models, (list, tuple, set)):
+            for item in models:
+                name = str(item or "").strip()
+                if name and name not in choices:
+                    choices.append(name)
+        return choices
 
-        - llm.enabled=False → 不检查；
-        - 只读查询（ctx.llm.get_available_models，零 token、零发送）；
+    def _degrade_task_choices(self, current: str, reason: str) -> None:
+        """候选退化：Host 列表获取失败/为空 → 仅保留当前配置值。
+
+        不得改写 model_task、不得静默切换到其他任务（配置值与实际调用
+        任务保持显式、一致）；当前值为空则留空列表（schema 层兜底）。"""
+        logger.warning("模型任务列表%s，model_task 下拉候选退化为当前值：%s", reason, current or "-")
+        self._llm_task_choices = [current] if current else []
+
+    async def _validate_llm_task_on_load(self) -> None:
+        """启动/配置变更/Host model reload 时执行：
+        只读校验 model_task 是否在 Host 任务列表中，并缓存 WebUI 下拉候选。
+
+        - llm.enabled=False → 不检查（零 RPC，与既有行为一致）；
+        - 单次 ``ctx.llm.get_available_models()``（零 token、零发送）；
+          候选 = Host 列表（strip / 去空 / 保序去重，保持 Host 返回顺序）；
+        - 当前配置值不在列表中时**追加到候选末尾**：保证 WebUI 正常选中
+          当前值、配置与实际调用任务保持显式一致，绝不静默切换；
         - 任务存在 → INFO；不存在/查询失败 → WARNING，插件仍正常加载，
           首个 alert 时 LLM 自动降级，不影响告警；
         - 需要的 manifest capability：llm.get_available_models。
@@ -1315,6 +1343,7 @@ class CodexResetWatcher(MaiBotPlugin):
         cfg = self.config.llm
         if not cfg.enabled:
             return
+        current = str(cfg.model_task or "").strip()
         try:
             models = await self.ctx.llm.get_available_models()
         except Exception:
@@ -1322,11 +1351,26 @@ class CodexResetWatcher(MaiBotPlugin):
                 "LLM 启动校验：任务列表查询失败，中文翻译将在告警时自动降级",
                 exc_info=True,
             )
+            self._degrade_task_choices(current, "查询失败")
             return
-        if not isinstance(models, list):
-            models = [str(m) for m in models] if isinstance(models, (tuple, set)) else []
-        available = ", ".join(models) if models else "-"
-        if cfg.model_task in models:
+        choices = self._normalize_task_choices(models)
+        if not choices:
+            self._degrade_task_choices(current, "为空")
+            logger.warning(
+                "LLM 启动校验：model_task=%s 不在 Host 任务列表（可用：%s）；"
+                "AI 翻译将自动降级，不影响告警",
+                cfg.model_task,
+                "-",
+            )
+            return
+        # 显示兜底与校验判定分离：任务是否在 Host 列表以**原始返回**为准；
+        # 追加当前值仅用于下拉正常选中显示，不改变校验结论、不改写配置。
+        in_host = current in choices
+        if current and not in_host:
+            choices.append(current)
+        self._llm_task_choices = choices
+        available = ", ".join(choices)
+        if in_host:
             logger.info(
                 "LLM 启动校验：model_task=%s 可用（可用任务：%s）",
                 cfg.model_task,
@@ -1339,6 +1383,31 @@ class CodexResetWatcher(MaiBotPlugin):
                 cfg.model_task,
                 available,
             )
+
+    def get_webui_config_schema(self, **kwargs) -> dict[str, Any]:
+        """WebUI Schema：llm.model_task 渲染为单选下拉（不允许自由输入）。
+
+        候选来自 on_load / on_config_update(model) 缓存的 Host 任务列表，
+        保持 Host 返回顺序；缓存未就绪或退化时以当前配置值兜底（保证正常
+        选中显示）。注入结构与 SDK 对 select 字段的原生生成形态完全一致
+        （type/ui_type="select" + choices），不自造 schema 字段；注入失败
+        保持默认文本框渲染，绝不弄坏配置页。
+        """
+        schema = super().get_webui_config_schema(**kwargs)
+        try:
+            field = schema["sections"]["llm"]["fields"]["model_task"]
+            choices = list(self._llm_task_choices) if self._llm_task_choices else []
+            if not choices:
+                current = str(self.config.llm.model_task or "").strip()
+                choices = [current] if current else []
+            field["type"] = "select"
+            field["ui_type"] = "select"
+            field["choices"] = choices
+        except (KeyError, RuntimeError, TypeError, AttributeError):
+            logger.warning(
+                "model_task 下拉 Schema 注入失败，保持默认文本框渲染", exc_info=True
+            )
+        return schema
 
     async def on_unload(self) -> None:
         await self._stop_task()
@@ -1366,6 +1435,12 @@ class CodexResetWatcher(MaiBotPlugin):
                 del self._inflight[key]
 
     async def on_config_update(self, scope: str, config_data: dict, version: str) -> None:
+        if scope == "model":
+            # Host 模型配置 reload 广播（config_reload_subscriptions 订阅）：
+            # 异步重新获取任务列表并刷新 model_task 下拉候选缓存。
+            # 只读 RPC，不触碰 watcher / inflight / state。
+            await self._validate_llm_task_on_load()
+            return
         if scope != "self":
             return
         # 顺序即正确性（v0.1.8 blocker 修正）：先关生产者（watcher），

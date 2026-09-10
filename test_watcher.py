@@ -2049,6 +2049,7 @@ def _wire_providers(
     vx: object = None,
     forecast: dict | None = None,
     feed: dict | None = None,
+    current: dict | None = None,
 ):
     """L4 provider 密闭桩：按 URL 路由 fx/vx/forecast/feed/current；
     fx/vx 传 Exception 则模拟抛错，传 dict 则返回该 payload；
@@ -4311,3 +4312,138 @@ def test_banked_midflight_receipt_prevents_double_send(tmp_path):
     asyncio.run(asyncio.wait_for(scenario(), 5))
     assert plugin._ctx.send.sent_messages == []  # send-time 重查命中：0 发送
     assert _gstate(plugin)["notified_keys"] == [key]
+
+
+# ===== v0.1.11 model_task 单选下拉（候选来自 Host 任务列表缓存）=====
+
+
+def test_get_webui_config_schema_model_task_is_select(tmp_path):
+    """schema 注入：model_task 渲染为单选 select（不再是自由文本），
+    choices 来自缓存的 Host 任务列表；候选为空时以当前配置值兜底。"""
+    plugin = _make_plugin(tmp_path)
+    plugin._llm_task_choices = ["planner", "replyer", "utils"]  # noqa: SLF001
+    schema = plugin.get_webui_config_schema()
+    field = schema["sections"]["llm"]["fields"]["model_task"]
+    assert field["type"] == "select"
+    assert field["ui_type"] == "select"
+    assert field["choices"] == ["planner", "replyer", "utils"]
+    assert field["label"] == "模型任务"  # 其余 schema 元数据不动
+    assert field["default"] == "replyer"
+
+    # 缓存未就绪（None）→ 当前配置值兜底，仍为 select，不留自由文本
+    plugin2 = _make_plugin(tmp_path / "b")
+    plugin2._llm_task_choices = None  # noqa: SLF001
+    field2 = plugin2.get_webui_config_schema()["sections"]["llm"]["fields"]["model_task"]
+    assert field2["ui_type"] == "select"
+    assert field2["choices"] == ["replyer"]
+
+
+def test_model_task_choices_strip_dedup_preserve_order(tmp_path):
+    """Host 返回顺序保持；strip / 去空 / 保序去重；当前值缺失时追加末尾。"""
+    plugin = _llm_plugin(tmp_path)
+
+    async def fake_models():
+        return [" utils ", "replyer", "", "planner", "utils", "   "]
+
+    plugin.ctx.llm.get_available_models = fake_models  # type: ignore[method-assign]
+    asyncio.run(plugin._validate_llm_task_on_load())  # noqa: SLF001
+    # 保序去重：utils → replyer → planner；当前值 replyer 已在列表中
+    assert plugin._llm_task_choices == ["utils", "replyer", "planner"]  # noqa: SLF001
+
+    plugin2 = _llm_plugin(tmp_path / "b")
+    removed = ["utils", "planner"]  # 当前值 replyer 暂时消失
+
+    async def fake_models2():
+        return list(removed)
+
+    plugin2.ctx.llm.get_available_models = fake_models2  # type: ignore[method-assign]
+    asyncio.run(plugin2._validate_llm_task_on_load())  # noqa: SLF001
+    # 当前配置值追加末尾：显示显式，绝不静默 fallback（要求 7）
+    assert plugin2._llm_task_choices == ["utils", "planner", "replyer"]  # noqa: SLF001
+    assert plugin2.config.llm.model_task == "replyer"  # 配置值不变
+
+
+def test_model_task_choices_host_failure_keeps_current(tmp_path, caplog):
+    """Host 获取失败/为空：候选退化为 [当前值] + WARNING；配置不被破坏、
+    不切换任务（要求 6/7）。"""
+    import logging
+
+    plugin = _llm_plugin(tmp_path)
+
+    async def boom():
+        raise RuntimeError("rpc down")
+
+    plugin.ctx.llm.get_available_models = boom  # type: ignore[method-assign]
+    with caplog.at_level(logging.WARNING, logger="codex_reset_watcher.plugin"):
+        asyncio.run(plugin._validate_llm_task_on_load())  # noqa: SLF001
+    assert plugin._llm_task_choices == ["replyer"]  # noqa: SLF001
+    assert "候选退化为当前值" in caplog.text
+    assert plugin.config.llm.model_task == "replyer"
+
+    plugin2 = _llm_plugin(tmp_path / "b")
+
+    async def empty():
+        return []
+
+    plugin2.ctx.llm.get_available_models = empty  # type: ignore[method-assign]
+    asyncio.run(plugin2._validate_llm_task_on_load())  # noqa: SLF001
+    assert plugin2._llm_task_choices == ["replyer"]  # noqa: SLF001
+    assert plugin2.config.llm.model_task == "replyer"
+
+
+def test_model_config_reload_subscribes_and_refreshes(tmp_path):
+    """订阅 Host model 配置热重载；reload 广播到达时异步刷新候选缓存，
+    只读 RPC 不触碰 watcher；刷新后 schema choices 同步更新。"""
+    from codex_reset_watcher.plugin import CodexResetWatcher
+
+    assert CodexResetWatcher.config_reload_subscriptions == ("model",)
+    plugin = _llm_plugin(tmp_path)
+    assert plugin.get_config_reload_subscriptions() == ["model"]
+    assert plugin._llm_task_choices is None  # noqa: SLF001  启动前未获取
+
+    async def fake_models():
+        return ["planner", "utils", "voice"]
+
+    plugin.ctx.llm.get_available_models = fake_models  # type: ignore[method-assign]
+    asyncio.run(plugin.on_config_update("model", {}, "1"))  # noqa: SLF001
+    assert plugin._llm_task_choices == ["planner", "utils", "voice", "replyer"]  # noqa: SLF001
+    field = plugin.get_webui_config_schema()["sections"]["llm"]["fields"]["model_task"]
+    assert field["choices"] == ["planner", "utils", "voice", "replyer"]
+    # generate 仍使用配置值（显式一致，不受候选刷新影响）
+    assert plugin.config.llm.model_task == "replyer"
+    # 未知 scope 仍然忽略（不刷新、不报错）
+    plugin._llm_task_choices = None  # noqa: SLF001
+    asyncio.run(plugin.on_config_update("bot", {}, "1"))  # noqa: SLF001
+    assert plugin._llm_task_choices is None  # noqa: SLF001
+
+
+def test_llm_generate_still_uses_configured_model_task(tmp_path):
+    """下拉候选缓存不影响 generate：实际调用仍显式使用配置的 model_task。"""
+    plugin = _llm_plugin(tmp_path)
+    captured: dict = {}
+
+    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, rpc_timeout_ms=None, **kwargs):
+        captured["model"] = model
+        return {"success": True, "response": json.dumps({"translation_zh": "译"}, ensure_ascii=False), "model_name": "m1", "total_tokens": 1}
+
+    plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
+    plugin._llm_task_choices = ["planner", "utils"]  # noqa: SLF001  候选里没有 replyer
+    asyncio.run(
+        plugin._process_upstream_alert(
+            {"official_signal": _osig()}, ["100000001"], None  # noqa: SLF001
+        )
+    )
+    assert captured["model"] == "replyer"  # 配置值显式传递，不被候选改写
+    assert "中文翻译：" in plugin._ctx.send.sent_messages[0][1]
+
+
+def test_model_task_schema_static_classmethod_unchanged():
+    """类级静态 schema（host rebuild / 默认导出路径）不受实例缓存影响：
+    字段名、类型、默认值与 0.1.10 完全一致，仅实例 WebUI 渲染层变 select。"""
+    from maibot_sdk.config import generate_plugin_config_schema
+
+    schema = generate_plugin_config_schema(CodexResetWatcherConfig)
+    field = schema["sections"]["llm"]["fields"]["model_task"]
+    assert field["type"] == "string"
+    assert field["default"] == "replyer"
+    assert field["choices"] is None
