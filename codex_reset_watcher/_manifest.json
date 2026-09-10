@@ -7,7 +7,6 @@
     "chat.get_stream_by_group_id",
     "chat.open_session",
     "llm.generate",
-    "llm.get_available_models",
     "send.text"
   ],
   "description": "监控 OpenAI Codex 全局额度重置与 Banked Reset 生命周期（结构化事件主源），镜像上游用户告警，向 QQ 群发送北京时间通知",
