@@ -160,6 +160,44 @@ v0.1.11 配置 UX（model_task 单选下拉）：
   不再声明 llm.get_available_models（v0.1.8 的启动任务校验随之移除，
   任务缺失改为首个真实 generate 时的降级日志呈现）。
 
+v0.1.12 Push Notification Banked 镜像（修复 2026-09-09 golden 样本漏报）：
+- 背景（evidence/v0.1.12/ 取证，BLOCKER CONFIRMED）：feed 车道把生命
+  周期白名单当作告警资格，banked_state=unknown 的事件在提取阶段即被
+  静默；而上游对同一事件做出的用户推送决策在
+  ``/api/push/notification`` 公开可见（真实 golden 样本
+  kind=banked、id=2097752790177370535，Telegram 已投递而 QQ 静默）。
+  职责边界不变：镜像上游已做出的用户告警决策，不做第二套语义分类器；
+  feed 车道白名单语义原样保留（unknown 仍不进 feed 车道）。
+- 新增 push-banked mirror 车道：源 = Codex Reset
+  ``/api/push/notification`` 的当前推送对象。最小触发契约只含三项：
+  payload 是 object、``alert`` 是 object、``alert.kind=="banked"`` 且
+  ``alert.id`` 为非空字符串（dedup identity = ``push-banked:{id}``，
+  真实形态 = Tweet/事件 ID）。title/body/at/url 全部是可选展示/
+  enrichment 字段，缺失、未知或 schema 演化一律不得否决告警。
+  非 banked kind（reset/forecast 等）不进入本车道——Global 告警镜像
+  仍由 L4 official_signal 车道独家承担，避免双车道重复投递。
+- 语义边界（bounded mirror，明确不是 offline recovery）：push
+  notification 是跨 kind 共享的"当前最新推送"指针，无历史、无
+  cursor；watcher 离线（或轮询间隔）期间被更新推送覆盖的 Banked
+  决策不可恢复。本车道只镜像轮询窗口内仍可见的当前决策；不设
+  freshness 窗口、不做 silent baseline（与 L4 "当前有效告警" 语义
+  一致：部署/重载时对现存对象补发一次属预期行为，是当前有效推送，
+  不是历史补发）。跨车道不做去重（v0.1.6 决策沿用：跨 lane
+  suppression 曾造成漏报），同车道由 receipt 幂等。
+- 展示/翻译边界：``alert.body`` 是上游拼装的推送文案（真实样本带
+  "Tibo: " 前缀、与 feed 逐字原文不一致），按 v0.1.10 来源边界
+  不冒充「Tibo 原文」、不进入 LLM 翻译输入；正文仍走既有
+  fxtwitter → vxtwitter → feed 同 id 推文降级链，全部失败则仅发
+  标题+原帖，绝不漏报。``alert.url`` 非真实推文 URL（真实样本为
+  "/"）时按 feed 车道同一规则回退 x.com/thsottiaux/status/{id}；
+  ``alert.at`` 仅作为 LLM published_at 元数据回退（与 L4 同语义，
+  复用 _l4_published_at），绝不参与触发/去重/receipt 判定。
+- receipt：per-group 独立字段 ``push_banked_keys``（STATE_VERSION 6
+  additive，不动版本号；旧状态经 _carry_validated_state 白名单携带，
+  类型损坏整体丢弃，方向保守：最多对当前推送对象多镜像一次）。send
+  成功才落该群键；某群失败下一轮仅该群重试；逐群发送前实时重查
+  stale group 与本群 receipt（防并发重复投递）。
+
 上游未形成面向用户的 alerts 告警时保持静默；插件不自行创造告警——
 不自行 NLP 猜测，也不对上游已形成的 alerts 告警做二次语义审核。
 """
@@ -196,6 +234,10 @@ FEED_TIMEOUT_SECONDS = 12
 
 # L4 upstream-alert mirror 去重键前缀：dedup identity = 上游 alert_event_id。
 UPSTREAM_ALERT_KEY_PREFIX = "upstream-alert:"
+
+# push-banked mirror 去重键前缀（v0.1.12）：dedup identity = 上游推送
+# alert.id（真实形态 = Tweet/事件 ID，与 feed 车道 event_id 同一命名空间）。
+PUSH_BANKED_KEY_PREFIX = "push-banked:"
 
 # ===== Tweet Content Provider（v0.1.7，L4 展示层 enrichment）=====
 # 公开无鉴权只读 GET；单 provider 10.0s 预算、最多两级（≈20s 上限），
@@ -641,6 +683,12 @@ def _carry_validated_state(legacy: Any) -> dict[str, Any]:
     tweet_ids = legacy.get("upstream_alert_tweet_ids")
     if isinstance(tweet_ids, list) and all(isinstance(k, str) for k in tweet_ids):
         carried["upstream_alert_tweet_ids"] = list(tweet_ids)
+    # push-banked mirror receipt 同样独立携带（v0.1.12，STATE_VERSION 6
+    # additive 字段，不动版本号）；类型损坏整体丢弃（方向保守：最多对
+    # 当前推送对象多镜像一次，绝不静默吞掉后续告警）。
+    push_keys = legacy.get("push_banked_keys")
+    if isinstance(push_keys, list) and all(isinstance(k, str) for k in push_keys):
+        carried["push_banked_keys"] = list(push_keys)
     reset_at = _parse_iso(legacy.get("last_notified_reset_at"))
     if reset_at is not None:
         carried["last_notified_reset_at"] = reset_at.isoformat()
@@ -1166,6 +1214,35 @@ def upstream_alert_event_id(forecast: Any) -> str | None:
     return alert_event_id or None
 
 
+def push_banked_alert_id(notification: Any) -> str | None:
+    """push-banked mirror 最小触发契约（纯函数）：返回上游推送 alert id 或 None。
+
+    契约仅三项，任一不满足即非本车道告警：
+    - payload 是 object 且 ``alert`` 是 object；
+    - ``alert.kind == "banked"``（上游已决定向用户设备推送该 Banked
+      告警——镜像的正是这个决策，插件不做第二层语义审核。精确匹配
+      小写 enum：未知值/其他 kind（reset、forecast 等）一律不触发）；
+    - ``alert.id`` 是非空字符串（dedup identity）。
+
+    title/body/at/url 等全部是可选展示/enrichment 字段，缺失、未知或
+    schema 演化不得在此否决告警。``alert.body`` 是上游拼装推送文案
+    （真实 golden 样本带 "Tibo: " 前缀、与 feed 逐字原文不一致），
+    本函数与整条车道都不消费它（v0.1.10 来源边界）。
+    """
+    if not isinstance(notification, dict):
+        return None
+    alert = notification.get("alert")
+    if not isinstance(alert, dict):
+        return None
+    if str(alert.get("kind") or "").strip() != "banked":
+        return None
+    alert_id = alert.get("id")
+    if not isinstance(alert_id, str):
+        return None
+    alert_id = alert_id.strip()
+    return alert_id or None
+
+
 class TweetContent:
     """L4 enrichment 内容结果模型。
 
@@ -1521,10 +1598,13 @@ class CodexResetWatcher(MaiBotPlugin):
         beijing = self._target_zone()
         # v0.1.9 顺序：先 forecast+L4（告警/确认 receipt 优先落盘），
         # 再处理 Feed L1/L2（可基于 receipt 与同 tweet 在途状态做 defer），
-        # 最后 Tibo L3。
+        # 最后 Tibo L3。v0.1.12：forecast 之后并行取 push notification，
+        # push-banked 车道先于 feed 车道调度（互不去重，仅顺序意图）。
         feed = await self._fetch_feed()
         forecast = await self._fetch_forecast()
+        notification = await self._fetch_push_notification()
         await self._process_upstream_alert(forecast, groups, feed)
+        await self._process_push_banked(notification, groups, feed)
         await self._process_feed_signals(feed, groups, beijing, forecast)
         # v0.1.10：Tibo /api/reset/current 用户侧退役——SCHEDULED /
         # TIME_CHANGED 不再发送 QQ 通知（独立预告/时间更新消失，由正常
@@ -1551,6 +1631,21 @@ class CodexResetWatcher(MaiBotPlugin):
         except (AttributeError, RuntimeError):
             return None
         return await self._get_json(f"{codex_base}/api/forecast", FEED_TIMEOUT_SECONDS)
+
+    async def _fetch_push_notification(self) -> dict[str, Any] | None:
+        """push-banked mirror 源（/api/push/notification 当前推送对象）。
+
+        该对象是上游"最近一次向用户设备推送的内容"的公开只读面（与
+        /api/push/latest 的重选展示不同），Banked 路由的当前决策在此可见。
+        获取失败只影响本车道（返回 None → 本轮静默跳过，下一轮重试），
+        不影响 feed / forecast 车道。"""
+        try:
+            codex_base = self.config.watcher.codex_base.rstrip("/")
+        except (AttributeError, RuntimeError):
+            return None
+        return await self._get_json(
+            f"{codex_base}/api/push/notification", FEED_TIMEOUT_SECONDS
+        )
 
     def _target_groups(self) -> list[str]:
         """通知群列表：strip、去空、保序去重。不做数字校验——垃圾群号会在
@@ -1991,6 +2086,102 @@ class CodexResetWatcher(MaiBotPlugin):
                         return candidate
                     break
         return "unknown"
+
+    # ===== push-banked mirror（v0.1.12）：上游用户推送的 Banked 镜像 =====
+
+    async def _process_push_banked(
+        self, notification: Any, groups: list[str], feed: Any = None
+    ) -> None:
+        """push-banked mirror 调度器（v0.1.12）。
+
+        - 契约不成立（非 banked 推送 / 缺 id / schema 演化）→ 本轮静默；
+        - 全部群已去重 → 零日志、零 task 创建（本轮请求已发出，与 L4
+          的"当前指针"语义一致：对象可见但无待发送群属常态）；
+        - inflight 按 alert id 去重：同对象未处理完不重复启动；
+        - 调度侧不做任何网络等待（Provider/LLM/发送都在管线内）。
+        """
+        alert_id = push_banked_alert_id(notification)
+        if alert_id is None:
+            return
+        key = f"{PUSH_BANKED_KEY_PREFIX}{alert_id}"
+        pending: list[str] = []
+        for group_id in groups:
+            entry = self._group_state(group_id)
+            seen = set(entry.get("push_banked_keys") or [])
+            if key not in seen:
+                pending.append(group_id)
+        if not pending or key in self._inflight:
+            return
+        alert = notification.get("alert") if isinstance(notification, dict) else None
+        alert = alert if isinstance(alert, dict) else {}
+        self._inflight[key] = {
+            "task": asyncio.create_task(
+                self._push_banked_pipeline(alert, alert_id, feed, pending),
+                name=f"codex-push-banked-{alert_id}",
+            ),
+            "kind": "push-banked",
+            "tweet_id": alert_id,
+            "groups": list(pending),
+        }
+
+    async def _push_banked_pipeline(
+        self, alert: dict[str, Any], alert_id: str, feed: Any, pending: list[str]
+    ) -> None:
+        """push-banked 单条镜像的后台处理管线（v0.1.12）。
+
+        与 L4 / feed banked 管线同一套结构：Content Provider →（可选）
+        LLM 翻译 → 统一 formatter（「Codex Banked Reset 提醒」）→ 逐群
+        发送 + per-group receipt（``push_banked_keys``）。
+
+        - alert.body 不进入正文候选（上游拼装文案，非逐字原文，见
+          push_banked_alert_id）；正文走既有 provider→feed 降级链，
+          全部失败仍发标题+原帖（enrichment 失败绝不漏报）；
+        - 展示 URL：alert.url 非真实推文 URL（真实样本为 "/"）时回退
+          x.com/thsottiaux/status/{id}（与 feed 车道同一规则）；
+        - published_at 复用 _l4_published_at（alert.at → feed 同 id
+          tweet.at → unknown），纯 LLM 元数据，不参与触发/去重；
+        - 顶层捕获一切异常；finally 清 inflight；send 成功才落该群键；
+          逐群发送前实时重查 stale group 与本群 receipt。
+        """
+        key = f"{PUSH_BANKED_KEY_PREFIX}{alert_id}"
+        try:
+            url = str(alert.get("url") or "").strip()
+            if not _is_real_source(url):
+                url = f"https://x.com/thsottiaux/status/{alert_id}"
+            content = await self._enrich_content(alert_id, feed)
+            translation = await self._llm_translate_content(
+                alert_id,
+                url,
+                self._l4_published_at(alert, alert_id, feed),
+                content,
+            )
+            message = build_full_notice(
+                BANKED_NOTICE_TITLE,
+                url,
+                content.text if content is not None else None,
+                content.completeness if content is not None else None,
+                translation,
+            )
+            current = set(self._target_groups())
+            for group_id in pending:
+                if group_id not in current:
+                    logger.info("Push Banked 镜像跳过已移除群：%s", group_id)
+                    continue
+                if key in set(
+                    self._group_state(group_id).get("push_banked_keys") or []
+                ):
+                    continue
+                if await self._send_group_text(group_id, message):
+                    logger.info("Push Banked 已镜像：群 %s %s", group_id, key)
+                    async with self._state_lock:
+                        entry = self._group_state(group_id)
+                        seen = set(entry.get("push_banked_keys") or [])
+                        entry["push_banked_keys"] = sorted(seen | {key})
+                        self._save_state()
+        except Exception:
+            logger.exception("Push Banked 镜像管线异常：%s", key)
+        finally:
+            self._inflight.pop(key, None)
 
     async def _llm_translate_content(
         self,

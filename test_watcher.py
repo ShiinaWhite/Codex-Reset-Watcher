@@ -47,6 +47,7 @@ from codex_reset_watcher.plugin import (  # noqa: E402
     build_confirmed_message,
     build_full_notice,
     conclusion_from_tibo_current,
+    push_banked_alert_id,
     signals_from_feed,
     upstream_alert_event_id,
 )
@@ -4359,3 +4360,455 @@ def test_model_task_schema_static_classmethod_unchanged():
     assert field["type"] == "string"
     assert field["default"] == "replyer"
     assert field["choices"] is None
+
+
+# ===== v0.1.12 push-banked mirror（/api/push/notification Banked 镜像）=====
+# 背景：evidence/v0.1.12/ 取证（BLOCKER CONFIRMED）——feed 车道白名单把
+# banked/unknown 在提取阶段静默，而上游用户推送决策在
+# /api/push/notification 公开可见。本节全部使用真实 golden 抓取作为
+# 请求 fixture（evidence/v0.1.12/，tracked）；TG 投递事实由公开频道
+# 独立佐证，不在测试中硬编码为 upstream contract。
+
+
+def _golden_push() -> dict:
+    """真实 2026-09-09 golden 推送对象（未改写上游字段）。"""
+    return _probe("evidence/v0.1.12/push_notification.json")
+
+
+def _golden_tweet_text() -> str:
+    golden = _probe("evidence/v0.1.12/golden_2097752790177370535.json")
+    return str(golden["tweet"]["text"])
+
+
+def _golden_feed() -> dict:
+    """真实 golden feed 形态：banked/unknown 事件 + 同 id 推文（未改写）。"""
+    golden = _probe("evidence/v0.1.12/golden_2097752790177370535.json")
+    return {"events": [golden["feed_event"]], "tweets": [golden["tweet"]]}
+
+
+def _wire_v0112(
+    plugin: CodexResetWatcher,
+    *,
+    fx: object = None,
+    vx: object = None,
+    forecast: dict | None = None,
+    feed: dict | None = None,
+    current: dict | None = None,
+    push: dict | None = None,
+) -> dict[str, list]:
+    """v0.1.12 密闭桩：在既有 provider 路由基础上增加 push endpoint。"""
+    calls: dict[str, list] = {"fx": [], "vx": [], "push": []}
+
+    async def fake_get(url: str, timeout_seconds: int):
+        if "api.fxtwitter.com" in url:
+            calls["fx"].append(url)
+            if isinstance(fx, Exception):
+                raise fx
+            return fx
+        if "api.vxtwitter.com" in url:
+            calls["vx"].append(url)
+            if isinstance(vx, Exception):
+                raise vx
+            return vx
+        if "api/push/notification" in url:
+            calls["push"].append(url)
+            return push
+        if "api/forecast" in url:
+            return forecast
+        if "api/feed" in url:
+            return feed
+        if "api/reset/current" in url:
+            return current
+        return None
+
+    plugin._get_json = fake_get  # type: ignore[method-assign]
+    return calls
+
+
+# --- 最小触发契约（纯函数） ---
+
+
+def test_push_banked_contract_accepts_real_golden_notification():
+    assert push_banked_alert_id(_golden_push()) == "2097752790177370535"
+
+
+def test_push_banked_contract_rejects_other_kinds():
+    """非 banked kind（含真实 reset 形态与未知/大小写不符 enum）一律不触发；
+    Global 告警由 L4 official_signal 车道独家承担。"""
+    base = _golden_push()["alert"]
+    for kind in ("reset", "forecast", "RESET", "Banked", "", None):
+        alert = dict(base)
+        alert["kind"] = kind
+        assert push_banked_alert_id({"alert": alert}) is None
+    # 真实 reset 推送对象形态（2026-09-08 Global 确认推送）
+    real_reset = {
+        "alert": {
+            "id": "2097174560412246215",
+            "kind": "reset",
+            "event_id": "reset:2097174560412246215",
+            "title": "✅ Codex reset confirmed",
+            "body": "“All reset for everyone. Enjoy the week with Astra.”",
+            "at": "2026-09-08T04:05:53.000Z",
+            "url": "/",
+        }
+    }
+    assert push_banked_alert_id(real_reset) is None
+
+
+def test_push_banked_contract_rejects_bad_payloads():
+    assert push_banked_alert_id(None) is None
+    assert push_banked_alert_id("push") is None
+    assert push_banked_alert_id([]) is None
+    assert push_banked_alert_id({}) is None
+    assert push_banked_alert_id({"alert": None}) is None
+    assert push_banked_alert_id({"alert": "banked"}) is None
+    assert push_banked_alert_id({"alert": ["banked"]}) is None
+    base = {"kind": "banked"}
+    for bad_id in (None, "", "   ", 123, ["2097752790177370535"]):
+        alert = dict(base)
+        alert["id"] = bad_id
+        assert push_banked_alert_id({"alert": alert}) is None
+
+
+def test_push_banked_contract_minimal_fields_still_fire():
+    """契约三字段之外全部缺失：仍必须触发（展示/enrichment 字段不否决，
+    schema 演化安全）。"""
+    assert push_banked_alert_id({"alert": {"kind": "banked", "id": "x1"}}) == "x1"
+
+
+# --- 调度与后台管线（真实 golden 抓取驱动） ---
+
+
+def test_push_banked_golden_end_to_end_full_pipeline(tmp_path):
+    """真实 golden 推送对象经后台管线：fx 全文 + LLM 翻译 → 统一结构通知；
+    push alert.body（上游拼装、带 "Tibo: " 前缀）不进入展示与 LLM 输入；
+    alert.at 作为 published_at 元数据；receipt 落 push_banked_keys。"""
+    plugin = _make_plugin(tmp_path)
+    text = _golden_tweet_text()
+    fx_payload = {
+        "code": 200,
+        "tweet": {"id": "2097752790177370535", "text": text, "is_note_tweet": False},
+    }
+    calls = _wire_v0112(plugin, fx=fx_payload)
+    captured: dict = {}
+
+    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, **kwargs):
+        captured["messages"] = prompt
+        return {
+            "success": True,
+            "response": json.dumps(
+                {"translation_zh": "Banked 已存入，可按需兑换。"}, ensure_ascii=False
+            ),
+            "model_name": "m1",
+            "total_tokens": 10,
+        }
+
+    plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
+
+    async def run_and_drain():
+        await plugin._process_push_banked(_golden_push(), ["100000001"])  # noqa: SLF001
+        await _drain_inflight(plugin)
+
+    asyncio.run(run_and_drain())
+    bodies = [b for _, b in plugin._ctx.send.sent_messages]
+    assert len(bodies) == 1
+    body = bodies[0]
+    assert body.startswith(BANKED_NOTICE_TITLE)
+    assert "中文翻译：\nBanked 已存入，可按需兑换。" in body
+    assert "Tibo 原文：\n" in body and text[:40] in body
+    assert "Tibo 原文摘录" not in body
+    # alert.url="/" 非推文 URL → 回退 x.com 结构化链接（feed 车道同规则）
+    assert "原帖：https://x.com/thsottiaux/status/2097752790177370535" in body
+    # push alert.body 是上游拼装文案（"Tibo: " 前缀形态）不得出现
+    assert "Tibo: There was" not in body
+    # alert.at 仅作 LLM published_at 元数据（相对时间解释基准）
+    joined = "".join(str(m.get("content", "")) for m in captured["messages"])
+    assert "published_at: 2026-09-09T18:23:34.000Z" in joined
+    assert len(calls["fx"]) == 1 and calls["vx"] == []
+    assert _gstate(plugin)["push_banked_keys"] == ["push-banked:2097752790177370535"]
+
+
+def test_push_banked_minimal_object_sends_title_and_permalink(tmp_path):
+    """契约极简形态（无 title/body/at/url）：仍必须通知（展示字段不否决）；
+    providers/feed 全缺 → 仅标题+原帖；LLM 不被调用（无正文不翻译）。"""
+    plugin = _llm_plugin(tmp_path, llm_overrides={"enabled": False})
+    _wire_v0112(plugin, fx=None, vx=None)
+
+    async def run_and_drain():
+        await plugin._process_push_banked(  # noqa: SLF001
+            {"alert": {"kind": "banked", "id": "2097752790177370535"}},
+            ["100000001"],
+        )
+        await _drain_inflight(plugin)
+
+    asyncio.run(run_and_drain())
+    assert plugin._ctx.send.sent_messages == [
+        (
+            "qq-group-100000001",
+            BANKED_NOTICE_TITLE
+            + "\n\n原帖：https://x.com/thsottiaux/status/2097752790177370535",
+        )
+    ]
+    assert plugin._ctx.llm.generate_calls == []
+    assert _gstate(plugin)["push_banked_keys"] == ["push-banked:2097752790177370535"]
+
+
+def test_push_banked_body_not_shown_when_providers_fail(tmp_path):
+    """真实 golden 对象 + providers 全挂 + feed 无同 id 推文：alert.body
+    不冒充原文、不交给 LLM；告警仍以标题+原帖发出（绝不漏报）。"""
+    plugin = _llm_plugin(tmp_path, llm_overrides={"enabled": False})
+    _wire_v0112(plugin, fx=None, vx=None)
+    feed = _golden_feed()
+    feed["tweets"] = []  # 无同 id 推文 → 无任何合法正文来源
+
+    async def run_and_drain():
+        await plugin._process_push_banked(
+            _golden_push(), ["100000001"], feed
+        )  # noqa: SLF001
+        await _drain_inflight(plugin)
+
+    asyncio.run(run_and_drain())
+    bodies = [b for _, b in plugin._ctx.send.sent_messages]
+    assert bodies == [
+        BANKED_NOTICE_TITLE
+        + "\n\n原帖：https://x.com/thsottiaux/status/2097752790177370535"
+    ]
+    assert "Tibo: There was" not in bodies[0]
+    assert "kerfuffle" not in bodies[0]
+    assert plugin._ctx.llm.generate_calls == []
+    assert _gstate(plugin)["push_banked_keys"] == ["push-banked:2097752790177370535"]
+
+
+def test_push_banked_feed_text_used_as_honest_fallback(tmp_path):
+    """providers 全挂 + feed 有同 id 推文：feed 逐字原文以「摘录」语义
+    展示（completeness=unknown 不称原文），LLM 正常翻译。"""
+    plugin = _make_plugin(tmp_path)
+    _wire_v0112(plugin, fx=None, vx=None)
+
+    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, **kwargs):
+        return {
+            "success": True,
+            "response": json.dumps({"translation_zh": "译"}, ensure_ascii=False),
+            "model_name": "m1",
+            "total_tokens": 1,
+        }
+
+    plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
+
+    async def run_and_drain():
+        await plugin._process_push_banked(
+            _golden_push(), ["100000001"], _golden_feed()
+        )  # noqa: SLF001
+        await _drain_inflight(plugin)
+
+    asyncio.run(run_and_drain())
+    body = plugin._ctx.send.sent_messages[0][1]
+    assert "Tibo 原文摘录：\n" in body
+    assert _golden_tweet_text()[:40] in body
+    assert "中文翻译：\n译" in body
+
+
+def test_push_banked_other_kind_never_reaches_lane(tmp_path):
+    """真实 reset 推送对象：banked 车道零发送、零 receipt、零 LLM。"""
+    plugin = _llm_plugin(tmp_path, llm_overrides={"enabled": False})
+    _wire_v0112(plugin, fx=None, vx=None)
+    real_reset = {
+        "alert": {
+            "id": "2097174560412246215",
+            "kind": "reset",
+            "event_id": "reset:2097174560412246215",
+            "title": "✅ Codex reset confirmed",
+            "body": "“All reset for everyone. Enjoy the week with Astra.”",
+            "at": "2026-09-08T04:05:53.000Z",
+            "url": "/",
+        }
+    }
+
+    async def run_and_drain():
+        await plugin._process_push_banked(real_reset, ["100000001"])  # noqa: SLF001
+        await _drain_inflight(plugin)
+
+    asyncio.run(run_and_drain())
+    assert plugin._ctx.send.sent_messages == []
+    assert not _gstate(plugin).get("push_banked_keys")
+    assert plugin._ctx.llm.generate_calls == []
+
+
+def test_push_banked_dedup_and_inflight_single_registration(tmp_path):
+    """同对象重复调度：inflight 未完成不重复注册；完成后 receipt 去重
+    （第二轮零发送、零 task）。"""
+    plugin = _llm_plugin(tmp_path, llm_overrides={"enabled": False})
+    _wire_v0112(plugin, fx=_FX_GOLDEN)
+
+    async def scenario():
+        await plugin._process_push_banked(_golden_push(), ["100000001"])  # noqa: SLF001
+        assert len(plugin._inflight) == 1  # noqa: SLF001
+        await plugin._process_push_banked(_golden_push(), ["100000001"])  # noqa: SLF001
+        assert len(plugin._inflight) == 1  # 同键未完成不重复启动
+        await _drain_inflight(plugin)
+        await plugin._process_push_banked(_golden_push(), ["100000001"])  # noqa: SLF001
+        assert plugin._inflight == {}  # receipt 已去重 → 零 task
+        await _drain_inflight(plugin)
+
+    asyncio.run(scenario())
+    assert len(plugin._ctx.send.sent_messages) == 1
+    assert _gstate(plugin)["push_banked_keys"] == ["push-banked:2097752790177370535"]
+
+
+def test_push_banked_send_failure_retries_only_failed_group(tmp_path):
+    """A 成 / B 败 → 仅 A 落 receipt；下一轮仅 B 重试，A 零重复。"""
+    plugin = _llm_plugin(
+        tmp_path, llm_overrides={"enabled": False}, group_id="", group_ids=["100000001", "100000002"]
+    )
+    _wire_v0112(plugin, fx=_FX_GOLDEN)
+    sends: dict[str, int] = {}
+    real_send = plugin._send_group_text  # noqa: SLF001
+
+    async def flaky_send(group_id: str, message: str) -> bool:
+        sends[group_id] = sends.get(group_id, 0) + 1
+        if group_id == "100000002" and sends[group_id] == 1:
+            return False  # 首轮 B 失败
+        return await real_send(group_id, message)
+
+    plugin._send_group_text = flaky_send  # type: ignore[method-assign]
+
+    async def run_round():
+        await plugin._process_push_banked(
+            _golden_push(), ["100000001", "100000002"]
+        )  # noqa: SLF001
+        await _drain_inflight(plugin)
+
+    asyncio.run(run_round())
+    assert _gstate(plugin, "100000001")["push_banked_keys"] == [
+        "push-banked:2097752790177370535"
+    ]
+    assert not _gstate(plugin, "100000002").get("push_banked_keys")
+    asyncio.run(run_round())
+    bodies = plugin._ctx.send.sent_messages
+    assert len(bodies) == 2  # 首轮 1（A 成 B 败不记录）+ 次轮 1（仅 B）
+    assert _gstate(plugin, "100000002")["push_banked_keys"] == [
+        "push-banked:2097752790177370535"
+    ]
+    assert sends == {"100000001": 1, "100000002": 2}
+
+
+def test_push_banked_group_removed_midflight_skipped(tmp_path):
+    """管线等待期间群被移出配置：跳过且不重建其 receipt（stale-group
+    竞态防护与 L4/banked 管线一致）。"""
+    plugin = _llm_plugin(
+        tmp_path, llm_overrides={"enabled": False}, group_id="", group_ids=["100000001", "100000002"]
+    )
+    _wire_v0112(plugin, fx=_FX_GOLDEN)
+
+    async def scenario():
+        await plugin._process_push_banked(
+            _golden_push(), ["100000001", "100000002"]
+        )  # noqa: SLF001
+        plugin.config.watcher.group_ids = ["100000001"]  # 管线启动后、发送前移除
+        await _drain_inflight(plugin)
+
+    asyncio.run(scenario())
+    sent_groups = {gid for gid, _ in plugin._ctx.send.sent_messages}
+    assert sent_groups == {"qq-group-100000001"}
+    assert _gstate(plugin, "100000001")["push_banked_keys"] == [
+        "push-banked:2097752790177370535"
+    ]
+    assert not _gstate(plugin, "100000002").get("push_banked_keys")
+
+
+def test_push_banked_fetch_failure_skips_lane_check_once(tmp_path):
+    """push endpoint 获取失败（None）→ 本车道整轮静默，下一轮重试；
+    feed 车道不受影响（baseline 照常完成）。"""
+    plugin = _llm_plugin(tmp_path, llm_overrides={"enabled": False})
+    _wire_v0112(plugin, fx=None, vx=None, push=None, feed=_golden_feed())
+    asyncio.run(plugin._check_once())  # noqa: SLF001
+    asyncio.run(_drain_inflight(plugin))
+    assert plugin._ctx.send.sent_messages == []
+    assert not _gstate(plugin).get("push_banked_keys")
+    # feed 车道照常完成 baseline（banked/unknown 仅记录）
+    assert _gstate(plugin)["feed_baseline_done"] is True
+
+
+def test_golden_miss_fixed_through_full_check_once(tmp_path):
+    """黄金事故回归（生产路径）：feed 含 banked/unknown（车道静默、仅
+    baseline 记录）+ push notification 选中同一事件 → QQ 恰好收到一次
+    push-banked 镜像；第二轮全链路去重。"""
+    golden = _probe("evidence/v0.1.12/golden_2097752790177370535.json")
+    plugin = _make_plugin(tmp_path)
+    _wire_v0112(
+        plugin,
+        fx=None,
+        vx=None,
+        push=_golden_push(),
+        feed={"events": [golden["feed_event"]], "tweets": [golden["tweet"]]},
+    )
+
+    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, **kwargs):
+        return {
+            "success": True,
+            "response": json.dumps(
+                {"translation_zh": "补偿性 Banked reset 已发放。"}, ensure_ascii=False
+            ),
+            "model_name": "m1",
+            "total_tokens": 5,
+        }
+
+    plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
+
+    async def scenario():
+        await plugin._check_once()  # noqa: SLF001
+        await _drain_inflight(plugin)
+
+    asyncio.run(scenario())
+    bodies = [b for _, b in plugin._ctx.send.sent_messages]
+    assert len(bodies) == 1
+    assert bodies[0].startswith(BANKED_NOTICE_TITLE)
+    assert "补偿性 Banked reset 已发放。" in bodies[0]
+    assert "原帖：https://x.com/thsottiaux/status/2097752790177370535" in bodies[0]
+    # feed 车道保持 v0.1.11 语义：unknown 仅 baseline 记录，不通知
+    assert "banked:2097752790177370535:unknown" in _gstate(plugin)["notified_keys"]
+    assert _gstate(plugin)["push_banked_keys"] == ["push-banked:2097752790177370535"]
+    # 第二轮：全链路去重（receipt 命中 → 零发送）
+    asyncio.run(scenario())
+    assert len(plugin._ctx.send.sent_messages) == 1
+
+
+def test_push_banked_state_roundtrip_preserves_receipt(tmp_path):
+    """receipt 随状态文件往返：重载后同对象不重发（STATE_VERSION 6
+    additive 字段经 _carry_validated_state 白名单携带）。"""
+    plugin = _llm_plugin(tmp_path, llm_overrides={"enabled": False})
+    _wire_v0112(plugin, fx=_FX_GOLDEN)
+
+    async def run_and_drain():
+        await plugin._process_push_banked(_golden_push(), ["100000001"])  # noqa: SLF001
+        await _drain_inflight(plugin)
+
+    asyncio.run(run_and_drain())
+    reloaded = _make_plugin(tmp_path)
+    assert _gstate(reloaded)["push_banked_keys"] == ["push-banked:2097752790177370535"]
+    _wire_v0112(reloaded, fx=_FX_GOLDEN)
+
+    async def rerun():
+        await reloaded._process_push_banked(_golden_push(), ["100000001"])  # noqa: SLF001
+        await _drain_inflight(reloaded)
+
+    asyncio.run(rerun())
+    assert reloaded._ctx.send.sent_messages == []
+
+
+def test_push_banked_receipt_corruption_dropped_conservatively(tmp_path):
+    """receipt 类型损坏 → 整体丢弃（保守方向：最多对当前对象多镜像一次，
+    绝不静默吞掉后续告警）。"""
+    state_path = tmp_path / "reset_state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "version": 6,
+                "state": {"groups": {"100000001": {"push_banked_keys": "corrupt"}}},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    plugin = _make_plugin(tmp_path)
+    assert not _gstate(plugin).get("push_banked_keys")
