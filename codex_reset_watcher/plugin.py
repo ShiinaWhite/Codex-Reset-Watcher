@@ -182,7 +182,10 @@ v0.1.12 Push Notification Banked 镜像（修复 2026-09-09 golden 样本漏报�
   决策不可恢复。本车道只镜像轮询窗口内仍可见的当前决策；不设
   freshness 窗口、不做 silent baseline（与 L4 "当前有效告警" 语义
   一致：部署/重载时对现存对象补发一次属预期行为，是当前有效推送，
-  不是历史补发）。跨车道不做去重（v0.1.6 决策沿用：跨 lane
+  不是历史补发）。轮询三源（feed/forecast/push notification）经
+  gather **并发开始**：push 采样不得串行等待两个无关 endpoint
+  （各 12s 超时，串行最坏推迟 24s，扩大不可恢复的漏报窗口）。
+  跨车道不做去重（v0.1.6 决策沿用：跨 lane
   suppression 曾造成漏报），同车道由 receipt 幂等。
 - 展示/翻译边界：``alert.body`` 是上游拼装的推送文案（真实样本带
   "Tibo: " 前缀、与 feed 逐字原文不一致），按 v0.1.10 来源边界
@@ -1598,11 +1601,15 @@ class CodexResetWatcher(MaiBotPlugin):
         beijing = self._target_zone()
         # v0.1.9 顺序：先 forecast+L4（告警/确认 receipt 优先落盘），
         # 再处理 Feed L1/L2（可基于 receipt 与同 tweet 在途状态做 defer），
-        # 最后 Tibo L3。v0.1.12：forecast 之后并行取 push notification，
-        # push-banked 车道先于 feed 车道调度（互不去重，仅顺序意图）。
-        feed = await self._fetch_feed()
-        forecast = await self._fetch_forecast()
-        notification = await self._fetch_push_notification()
+        # 最后 Tibo L3。v0.1.12：三个只读源**并发**开始（gather）——
+        # /api/push/notification 是 latest-only、被覆盖即不可恢复的 surface，
+        # 其采样不得串行等待 feed/forecast（各自 12s 超时，串行最坏把采样
+        # 推迟 24s，扩大已确认不可恢复的 Banked 漏报窗口）。
+        feed, forecast, notification = await asyncio.gather(
+            self._fetch_feed(),
+            self._fetch_forecast(),
+            self._fetch_push_notification(),
+        )
         await self._process_upstream_alert(forecast, groups, feed)
         await self._process_push_banked(notification, groups, feed)
         await self._process_feed_signals(feed, groups, beijing, forecast)

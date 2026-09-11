@@ -3499,6 +3499,12 @@ def test_config_update_race_no_orphan_alert_task(tmp_path):
     async def scenario():
         await plugin._process_upstream_alert({"official_signal": _osig()}, ["100000001"], None)
         assert plugin._inflight  # A 在途
+        # v0.1.12 并发采样修正配套：先让 A 管线真实进入 provider 调用并
+        # 挂住（事件驱动等待，非 sleep 猜时序）——否则 A 是从未运行的
+        # 任务，取消分支不会在存活循环内发生，B 的创建/完成退化为
+        # shutdown 阶段的调度巧合（_check_once 三源 gather 化后暴露）。
+        while provider_calls["n"] < 1:
+            await asyncio.sleep(0.01)
         await plugin.on_config_update("self", new_config, "1")  # 先停 watcher，再 cancel+gather
         # gather 窗口内创建的 B 已注册并在跑；等待其自然完成
         while plugin._inflight:
@@ -4812,3 +4818,53 @@ def test_push_banked_receipt_corruption_dropped_conservatively(tmp_path):
     )
     plugin = _make_plugin(tmp_path)
     assert not _gstate(plugin).get("push_banked_keys")
+
+
+def test_push_fetch_starts_concurrently_not_serial(tmp_path):
+    """v0.1.12 blocker 修正回归（确定性并发验证，无 sleep 猜时序）：
+    feed/forecast 卡在 barrier 上时，push notification 采样必须已经开始——
+    latest-only、被覆盖即不可恢复的 surface 不得串行等待两个无关 endpoint
+    （各 12s 超时，串行最坏推迟 24s，扩大已确认不可恢复的漏报窗口）。"""
+    plugin = _llm_plugin(tmp_path, llm_overrides={"enabled": False})
+    started: dict[str, bool] = {}
+    gates: dict[str, asyncio.Event] = {}
+
+    async def gated_get(url: str, timeout_seconds: int):
+        if "api/push/notification" in url:
+            started["push"] = True
+            return _golden_push()
+        if "api/feed" in url:
+            started["feed"] = True
+            await gates["feed"].wait()  # barrier：不 set 就不返回
+            return _golden_feed()
+        if "api/forecast" in url:
+            started["forecast"] = True
+            await gates["forecast"].wait()  # barrier：不 set 就不返回
+            return None
+        return None
+
+    plugin._get_json = gated_get  # type: ignore[method-assign]
+
+    async def scenario():
+        gates["feed"] = asyncio.Event()
+        gates["forecast"] = asyncio.Event()
+        check = asyncio.create_task(plugin._check_once())  # noqa: SLF001
+        # 确定性让步（事件循环步进，非定时 sleep）：让 gather 的三个子任务
+        # 各自跑到第一个挂起点。feed/forecast 此时应已挂在 barrier 上。
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        # feed/forecast 未 release：push 采样必须已经开始
+        assert started.get("feed") is True
+        assert started.get("forecast") is True
+        assert started.get("push") is True, (
+            "push notification 采样被 feed/forecast 串行阻塞（blocker 回归）"
+        )
+        gates["feed"].set()
+        gates["forecast"].set()
+        await check
+        await _drain_inflight(plugin)
+
+    asyncio.run(scenario())
+    # barrier 期间已取得的 push 对象照常镜像；feed 车道 unknown 保持静默
+    assert len(plugin._ctx.send.sent_messages) == 1
+    assert _gstate(plugin)["push_banked_keys"] == ["push-banked:2097752790177370535"]
