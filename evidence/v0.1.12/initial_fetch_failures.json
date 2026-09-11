@@ -1,0 +1,37 @@
+[
+  {
+    "file": "feed.json",
+    "url": "https://codex-reset.com/api/feed",
+    "error": "HTTP Error 403: Forbidden"
+  },
+  {
+    "file": "forecast.json",
+    "url": "https://codex-reset.com/api/forecast",
+    "error": "HTTP Error 403: Forbidden"
+  },
+  {
+    "file": "timeline.json",
+    "url": "https://codex-reset.com/api/timeline",
+    "error": "HTTP Error 403: Forbidden"
+  },
+  {
+    "file": "reset_current.json",
+    "url": "https://codex-reset.com/api/reset/current",
+    "error": "HTTP Error 403: Forbidden"
+  },
+  {
+    "file": "home.html",
+    "url": "https://codex-reset.com/",
+    "error": "HTTP Error 403: Forbidden"
+  },
+  {
+    "file": "banked.html",
+    "url": "https://codex-reset.com/banked-reset",
+    "error": "HTTP Error 403: Forbidden"
+  },
+  {
+    "file": "telegram.html",
+    "url": "https://t.me/s/codexresetalerts",
+    "error": "<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1028)>"
+  }
+]

@@ -1,0 +1,154 @@
+[
+  {
+    "file": "feed.json",
+    "url": "https://codex-reset.com/api/feed",
+    "http_status": 200,
+    "bytes": 62596,
+    "sha256": "996b068f68aca130de8326199a7385a559d6ee5e9a5c58eb11ef24c04eb35a34",
+    "captured_date_utc": "2026-09-11"
+  },
+  {
+    "file": "forecast.json",
+    "url": "https://codex-reset.com/api/forecast",
+    "http_status": 200,
+    "bytes": 8723,
+    "sha256": "f10758ac22fec642a711c5dde1cff6b0e9a5e7f9d2518a162e3dc9f6d6790669",
+    "captured_date_utc": "2026-09-11"
+  },
+  {
+    "file": "timeline.json",
+    "url": "https://codex-reset.com/api/timeline",
+    "http_status": 200,
+    "bytes": 121184,
+    "sha256": "36472add6fae36f716f3b40d174d2f654277a1aafbb3d2274162211e54ebd72e",
+    "captured_date_utc": "2026-09-11"
+  },
+  {
+    "file": "reset_current.json",
+    "url": "https://codex-reset.com/api/reset/current",
+    "http_status": 404,
+    "bytes": 21,
+    "sha256": "d2dfdc9511fbeaa0701d1f8730f4989313b062ca1b61a2bd8bed8f4f5d654b5d",
+    "captured_date_utc": "2026-09-11"
+  },
+  {
+    "file": "tibo_reset_current.json",
+    "url": "https://tibo.modelyard.dev/api/reset/current",
+    "http_status": 200,
+    "bytes": 468,
+    "sha256": "bad6dba1d68a0d80fc40f1f7be84da9e5b5e38819f0379f6bd5e47b4c8d26243",
+    "captured_date_utc": "2026-09-11"
+  },
+  {
+    "file": "health.json",
+    "url": "https://codex-reset.com/api/health",
+    "http_status": 200,
+    "bytes": 10422,
+    "sha256": "b154c03c55b2d4078dd27ddcfeee9aaa530bb2c4d213e6040ffae8067e719ce5",
+    "captured_date_utc": "2026-09-11"
+  },
+  {
+    "file": "home.html",
+    "url": "https://codex-reset.com/",
+    "http_status": 200,
+    "bytes": 111797,
+    "sha256": "ef9507bee24adea411522b0566440be645f0906e58b85621697a3f0c96a05eb6",
+    "captured_date_utc": "2026-09-11"
+  },
+  {
+    "file": "banked.html",
+    "url": "https://codex-reset.com/banked-reset",
+    "http_status": 200,
+    "bytes": 43267,
+    "sha256": "3b90907084964ab29a37d9799b709d88e1dece8aa48cc013b4b8804bbb97cc08",
+    "captured_date_utc": "2026-09-11"
+  },
+  {
+    "file": "release-notes.html",
+    "url": "https://codex-reset.com/release-notes",
+    "http_status": 200,
+    "bytes": 59382,
+    "sha256": "cee748eac8de414106476bcab548f8897682fbcf55ec2582c198da634658a543",
+    "captured_date_utc": "2026-09-11"
+  },
+  {
+    "file": "sw.js",
+    "url": "https://codex-reset.com/sw.js",
+    "http_status": 200,
+    "bytes": 3935,
+    "sha256": "4e33cc047fad9159b7067deac98530ea25df206a2484dc126263a1c174f7d7bc",
+    "captured_date_utc": "2026-09-11"
+  },
+  {
+    "file": "push_notification.json",
+    "url": "https://codex-reset.com/api/push/notification",
+    "http_status": 200,
+    "bytes": 373,
+    "sha256": "7049bbd5b3b46815e4b2dfa917d061f6283509f72ef9f30a86853d59875cb420",
+    "captured_date_utc": "2026-09-11"
+  },
+  {
+    "file": "push_latest.json",
+    "url": "https://codex-reset.com/api/push/latest",
+    "http_status": 200,
+    "bytes": 260,
+    "sha256": "073eac0379cc68245fb77ba637654aeff8e488de6240d28f53eff83b5bbb5c59",
+    "captured_date_utc": "2026-09-11"
+  },
+  {
+    "file": "app.js",
+    "url": "https://codex-reset.com/assets/533e820a86/app.js",
+    "http_status": 200,
+    "bytes": 4382,
+    "sha256": "15571e28a9573ac52aea18ee5603327160844ab28d7991afd7c54de88ada94a1",
+    "captured_date_utc": "2026-09-11"
+  },
+  {
+    "file": "banked-evidence.js",
+    "url": "https://codex-reset.com/assets/533e820a86/banked-evidence.js",
+    "http_status": 200,
+    "bytes": 3247,
+    "sha256": "701f7ce0b022abf47905b94c62f824a0a0f88e9feeb8f51f1cfe4989b68e9132",
+    "captured_date_utc": "2026-09-11"
+  },
+  {
+    "file": "banked-state.js",
+    "url": "https://codex-reset.com/assets/533e820a86/banked-state.js",
+    "http_status": 200,
+    "bytes": 5602,
+    "sha256": "6aef249c9a8748fb0784dc3e6e163434e90c334041b9286b2b2c6f5ff56c0e8e",
+    "captured_date_utc": "2026-09-11"
+  },
+  {
+    "file": "home-radar.js",
+    "url": "https://codex-reset.com/assets/533e820a86/home-radar.js",
+    "http_status": 200,
+    "bytes": 16657,
+    "sha256": "d6eec9cd8176e115c971a0b7579a43f31c51c8e26ba6a9049cf6607a19f26457",
+    "captured_date_utc": "2026-09-11"
+  },
+  {
+    "file": "home.js",
+    "url": "https://codex-reset.com/assets/533e820a86/home.js",
+    "http_status": 200,
+    "bytes": 15597,
+    "sha256": "0c163022187418aa0864e714e72869fb8191fd344836656c5ef7a8d32ebb77b2",
+    "captured_date_utc": "2026-09-11"
+  },
+  {
+    "file": "push.js",
+    "url": "https://codex-reset.com/assets/533e820a86/push.js",
+    "http_status": 200,
+    "bytes": 8082,
+    "sha256": "d01857eab06d01569a37fee1c3d0f81a09bb1b08e2c0590f49112356e9c1d263",
+    "captured_date_utc": "2026-09-11"
+  },
+  {
+    "file": "status-page.js",
+    "url": "https://codex-reset.com/assets/533e820a86/status-page.js",
+    "http_status": 200,
+    "bytes": 24669,
+    "sha256": "6e784318b21af33973917d0f610f105f71df9861355b9331dbbc3def676a7c6c",
+    "captured_date_utc": "2026-09-11"
+  }
+]

@@ -1,0 +1,77 @@
+{
+  "purpose": "v0.1.12 forensic / blocker evidence; not a fix candidate",
+  "algorithm": "SHA-256",
+  "self_excluded": true,
+  "files": [
+    {
+      "file": ".gitattributes",
+      "bytes": 8,
+      "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da",
+      "provenance": "new evidence packaging / offline verification",
+      "copied_from": null
+    },
+    {
+      "file": "process_environment.json",
+      "bytes": 1753,
+      "sha256": "e980a1da27b4197734b9a262c4860187f0e194ab7c741d2f88c7f73d637dfb7c",
+      "provenance": "original local capture, byte-for-byte copy",
+      "copied_from": ".work/tg-final-probe/process_environment.json"
+    },
+    {
+      "file": "process_environment_probe.reconstructed.py",
+      "bytes": 1158,
+      "sha256": "ca81fbbd39285e6d8088e3dd67cdad11d454f8361fea527ab42c8765cd2ca766",
+      "provenance": "reconstructed from recorded tool-call source; not rerun",
+      "copied_from": null
+    },
+    {
+      "file": "REPORT.md",
+      "bytes": 6644,
+      "sha256": "2ffae5337daf2c96d5da3e93b31fd92b1824cbf9995a19a7926c9c9611c42dc0",
+      "provenance": "new evidence packaging / offline verification",
+      "copied_from": null
+    },
+    {
+      "file": "REPORT.original.md",
+      "bytes": 4716,
+      "sha256": "d31f62d137f62ef43eaccf68b9f724fb43c158c30a98f10efa0253e78831c1bb",
+      "provenance": "original local capture, byte-for-byte copy",
+      "copied_from": ".work/tg-final-probe/REPORT.md"
+    },
+    {
+      "file": "round1.jsonl",
+      "bytes": 1371,
+      "sha256": "faca0ad3626a79eb80345d012a812e53ab92e24811d4b4693087cafdfac02541",
+      "provenance": "original local capture, byte-for-byte copy",
+      "copied_from": ".work/tg-final-probe/round1.jsonl"
+    },
+    {
+      "file": "round2.jsonl",
+      "bytes": 950,
+      "sha256": "e64aad1979dc30fc355819723e3ad3bc1afc67f3aed33b8e49cc9148980c7ac6",
+      "provenance": "original local capture, byte-for-byte copy",
+      "copied_from": ".work/tg-final-probe/round2.jsonl"
+    },
+    {
+      "file": "runtime_probe.py",
+      "bytes": 1434,
+      "sha256": "3a0a0e33fa75f908cd7679d994cd0f3c905b9e7c5b0919291214508dcc7fccf1",
+      "provenance": "original local capture, byte-for-byte copy",
+      "copied_from": ".work/tg-final-probe/runtime_probe.py"
+    },
+    {
+      "file": "runtime_probe_round2.py",
+      "bytes": 2028,
+      "sha256": "abd13bcfe99649a911127d051cb83d5150faf5f44cf969f1981efdee29ad6404",
+      "provenance": "original local capture, byte-for-byte copy",
+      "copied_from": ".work/tg-final-probe/runtime_probe_round2.py"
+    },
+    {
+      "file": "verify_evidence.py",
+      "bytes": 2098,
+      "sha256": "669bdda1f01985f367f0e18875f619ddbef545a63aad46f94c7897b1d04be00b",
+      "provenance": "new evidence packaging / offline verification",
+      "copied_from": null
+    }
+  ]
+}

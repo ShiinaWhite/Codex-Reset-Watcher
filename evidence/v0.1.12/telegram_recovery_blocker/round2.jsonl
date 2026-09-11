@@ -1,0 +1,4 @@
+{"at": "2026-09-11T15:16:18.970527+00:00", "runner_processes": [], "default_ca_sha256": "714d457d580922dbf1d0be8bd35ba236a842b50b0072ae791582a19adef772a5"}
+{"url": "https://codex-reset.com/api/push/notification", "ipv4_only": false, "status": 200, "seconds": 0.893, "body": "{\"alert\":{\"id\":\"2097752790177370535\",\"kind\":\"banked\",\"title\":\"\ud83c\udf9f\ufe0f Banked reset update\",\"body\":\"Tibo: There was a bit of a kerfuffle this morning with some banked resets not fully applying when used in ChatGPT Work and Codex. Everyone who used one in the affected time window is getting another one and an email to apologize.\",\"at\":\"2026-09-09T18:23:34.000Z\",\"url\":\"/\"}}"}
+{"url": "https://t.me/codexresetalerts/70?embed=1", "ipv4_only": false, "error_type": "TimeoutError", "error": "", "seconds": 25.134}
+{"url": "https://t.me/s/codexresetalerts", "ipv4_only": true, "error_type": "TimeoutError", "error": "", "seconds": 25.136}

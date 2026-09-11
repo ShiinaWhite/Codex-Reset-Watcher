@@ -1,0 +1,8 @@
+{
+  "command": "PYTHONPATH=test_env python -m pytest test_watcher.py test_replay_corpus.py --tb=short -q",
+  "python": "3.13.3",
+  "passed": 203,
+  "duration_seconds": 3.47,
+  "production_changes": false,
+  "new_regression_acceptance": "not implemented: contract gap"
+}

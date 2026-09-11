@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Google tag (gtag.js) -->
+  <script src="/assets/533e820a86/google-tag.js" data-google-tag-id="G-X9BQFS8GMR"></script>
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-X9BQFS8GMR"></script>
+  <title>Release Notes - Codex Reset</title>
+  <meta name="description" content="Every version of codex-reset.com (formerly codexreset.net), newest first — Email alerts, browser push, Discord alerts, the usage workbench, Codex Juice — plus what each page and public API does.">
+  <link rel="canonical" href="https://codex-reset.com/codexreset-release">
+  <meta name="theme-color" content="#0b100e">
+  <meta name="color-scheme" content="dark">
+  
+  <link rel="alternate" hreflang="en" href="https://codex-reset.com/codexreset-release">
+  <link rel="alternate" hreflang="x-default" href="https://codex-reset.com/codexreset-release">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="en">
+  
+  <meta property="og:site_name" content="Codex Reset">
+  <meta property="og:title" content="Release Notes - Codex Reset">
+  <meta property="og:description" content="Every version of codex-reset.com (formerly codexreset.net), newest first — Email alerts, browser push, Discord alerts, the usage workbench, Codex Juice — plus what each page and public API does.">
+  <meta property="og:url" content="https://codex-reset.com/codexreset-release">
+  <meta property="og:image" content="https://codex-reset.com/og-image.png?v=9">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Terminal-style card: Will Codex reset today? Last verified reset plus live 24h/48h forecast — codex-reset.com">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@codex_reset">
+  <meta name="twitter:creator" content="@codex_reset">
+  <meta name="twitter:title" content="Release Notes - Codex Reset">
+  <meta name="twitter:description" content="Every version of codex-reset.com (formerly codexreset.net), newest first — Email alerts, browser push, Discord alerts, the usage workbench, Codex Juice — plus what each page and public API does.">
+  <meta name="twitter:image" content="https://codex-reset.com/og-image.png?v=9">
+  <meta name="twitter:image:alt" content="Terminal-style card: Will Codex reset today? Last verified reset plus live 24h/48h forecast — codex-reset.com">
+  <meta name="codex-reset:locale-module-template" content="/assets/533e820a86/i18n-[locale].js">
+  <link rel="modulepreload" href="/assets/533e820a86/i18n-en.js">
+  
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.svg">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <link rel="alternate" type="application/atom+xml" title="Codex Reset" href="/feed.xml">
+  <link rel="preload" href="/assets/533e820a86/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/assets/533e820a86/styles.css">
+  <link rel="stylesheet" href="/assets/533e820a86/styles-pages.css">
+  
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Codex Reset","alternateName":"Codex Reset Tracker","url":"https://codex-reset.com/","applicationCategory":"DeveloperApplication","operatingSystem":"Web","description":"codex-reset.com (formerly codexreset.net) is a free, independent tracker for OpenAI Codex usage-limit resets. It records every verified global reset announcement, forecasts when the next one could land, and runs personal 5-hour and weekly countdowns entirely inside your browser. It is not built, endorsed, or reviewed by OpenAI, it never sees your OpenAI account, and it needs no sign-up.","softwareVersion":"1.10.1.0","datePublished":"2026-07-25","dateModified":"2026-09-06","releaseNotes":"https://codex-reset.com/codexreset-release","featureList":["Reset forecast (/): Answers \"will Codex reset today?\" with the last verified global reset, a 24h/48h probability, and personal 5-hour, weekly and banked-reset countdowns that stay in local storage.","Reset timeline (/timeline): Every verified reset, boost, unlock and banked-reset announcement, with timezone-aware charts, filters and a sortable table.","Signal radar (/radar): Live model configuration, OpenAI service health, reset events and limit signals in one evidence-labeled feed.","Usage workbench (/codex-usage): What every block of OpenAI's Codex usage dashboard means, plus a browser-only analyzer: paste your `codex /status` output and get your weekly window, burn pace and projected reset back.","Reset value calculator (/worth-it): Whether a given reset actually helped you: it weighs the quota a reset hands back against the weekly window it restarts, scores a hypothetical reset at any moment in the next seven days, and advises whether to spend or hold a banked reset.","Banked reset guide (/banked-reset): The latest public banked-reset signal, a lifecycle timeline that separates updates from grants, exact-expiry tracking, redemption mechanics, and the historical grant/context ledger.","Model & effort selector (/codex-juice): Which Codex model (Astra, Sol, Terra, Luna) and which Low–XHigh reasoning effort fits a task, with the public evidence behind each recommendation.","Status & compensation (/status): Live Codex service state, official incident history, public recovery times, and which resets OpenAI explicitly linked to an outage.","Tibo radar (/tibo): Verified @thsottiaux signals, the reset announcement rail, and the community reset vigil.","Atom feed (/feed.xml): Verified announcements as a standard Atom feed, for readers and crawlers."],"isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"publisher":{"@id":"https://codex-reset.com/#organization"},"inLanguage":"en"}</script>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"ItemList","name":"Codex Reset release history","url":"https://codex-reset.com/codexreset-release","itemListOrder":"https://schema.org/ItemListOrderDescending","numberOfItems":22,"itemListElement":[{"@type":"ListItem","position":1,"name":"1.10.1.0 — GPT-6 Astra: limits, plan access and the model selector","url":"https://codex-reset.com/codexreset-release#v1-10-1-0","description":"improved: /codex-usage quotes OpenAI's current per-model 5-hour estimates with GPT-6 Astra on top (5–45 local messages on Plus, about half of Sol), the revised Sol, Terra and Luna ranges, Astra's 2.5× credit rate, and Astra reaching every Plus and Business user on Sep 4, 2026. fixed: The 5-hour limit status records the Plus return Tibo announced on Aug 25, 2026 instead of claiming the July lift is still in force. improved: /codex-juice recommends Astra for ambiguous or high-risk work, escalates Sol to Astra when verification is hard or quality wins, and states the allowance cost; the effort evidence stays on GPT-5.6 Sol until NixBench publishes Astra rows."},{"@type":"ListItem","position":2,"name":"1.10.0.0 — Alert v3: one decision, one Event, independent #tibo","url":"https://codex-reset.com/codexreset-release#v1-10-0-0","description":"fixed: Alert v3 owns post-fence regular global Resets and strong Watches: one decision function, one immutable Event, a Durable Object single writer, and independent Telegram, Discord and payload-free Web Push receipts. fixed: The homepage now keeps the exact 83%/93% commitment probability and the vote link to /codex-usage#reset-poll through both server rendering and client hydration. fixed: Day-level Alert deadlines now count down to the latest stated window boundary and explain that the real reset may happen earlier, instead of presenting the boundary as an announced exact reset time. improved: Tibo surfaces now use his latest reviewed X profile portrait, pinned by URL, dimensions and SHA-256 so future remote profile changes cannot silently alter the site asset. improved: #tibo remains independent, historical events cannot replay, and the separate pure-banked alert route keeps its Telegram, Discord and Browser Push behavior without becoming a regular Reset Event."},{"@type":"ListItem","position":3,"name":"1.9.6.1 — Email alerts channel record","url":"https://codex-reset.com/codexreset-release#v1-9-6-1","description":"fixed: The release page now lists Email alerts at notify.codex-reset.com as a live strict #alerts channel instead of describing only the alerts-dock shortcut. improved: The channel record now states the existing service's double opt-in, batched and at-most-once delivery, and no open or click tracking; Telegram, Discord and Browser Push can arrive first."},{"@type":"ListItem","position":4,"name":"1.9.6.0 — Tibo reset rationale and alert actions","url":"https://codex-reset.com/codexreset-release#v1-9-6-0","description":"improved: /tibo now explains why OpenAI keeps resetting Codex limits, separating compensation after a bad experience, milestone rollouts, and capacity/efficiency as three sourced reasons with a timestamped Tibo interview link and an explicit evidence boundary. improved: /banked-reset now offers a localized X share plea on the latest banked signal card, with the elapsed time since the last banked reset baked into the share text and refreshed live after hydration. improved: The bottom-right alerts dock now includes a direct mail shortcut to the existing notify.codex-reset.com Email alerts page alongside Telegram and Discord."},{"@type":"ListItem","position":5,"name":"1.9.5.0 — Permanent banked status strip","url":"https://codex-reset.com/codexreset-release#v1-9-5-0","description":"fixed: The homepage BANKED strip no longer disappears after 72 hours; the newest actionable banked update stays visible until a newer one replaces it, with its age disclosed by the timestamp. improved: The static /banked-reset bake now ships the arriving and available lifecycle events in all four languages, so the first paint already shows the truthful AVAILABLE state before JavaScript hydrates."},{"@type":"ListItem","position":6,"name":"1.9.4.0 — Official-window countdown","url":"https://codex-reset.com/codexreset-release#v1-9-4-0","description":"new: The home page now shows a second-level electronic estimated-reset clock when Tibo publishes a valid official window no wider than two hours; it targets the window midpoint and always keeps the estimate language explicit. improved: Dismissal is scoped to the exact tweet and time boundaries, so the same event stays hidden after refresh while a new post or revised official window appears again automatically."},{"@type":"ListItem","position":7,"name":"1.9.3.0 — Five-minute alert resilience","url":"https://codex-reset.com/codexreset-release#v1-9-3-0","description":"fixed: A five-minute safety check now requires two matching observations, then hands a fresh missed Tibo post to the standard Telegram, Discord, Browser Push, timeline, forecast and Atom receipt chain. improved: Exact post IDs, equivalent 15-minute text/windows and per-channel receipts prevent duplicate alerts even when the primary path wins between the first and second observation. improved: Radar now reads the canonical official forecast signal, no-JavaScript home HTML receives the full live forecast state, and active-signal or just-reset pages refresh once a minute."},{"@type":"ListItem","position":8,"name":"1.9.2.0 — Browser Push follows #alerts","url":"https://codex-reset.com/codexreset-release#v1-9-2-0","description":"fixed: The exact Tibo wording ‘Reset will land around 14pm PST tomorrow’ now resolves to an actionable 2 PM PT commitment instead of silent context. improved: Browser Push now shares the #alerts routing boundary: strict reset announcements, actionable dated commitments, and qualifying global banked-reset updates each own an independent push receipt. improved: Payload-free notifications fetch the exact current alert from codex-reset.com; an active v2 Service Worker gate keeps legacy workers on reset-only delivery until they can render broader alerts truthfully."},{"@type":"ListItem","position":9,"name":"1.9.1.0 — Live banked evidence","url":"https://codex-reset.com/codexreset-release#v1-9-1-0","description":"improved: /banked-reset now leads with the latest public banked signal and a recent lifecycle timeline instead of opening as a documentation-heavy guide. improved: A five-drop grant rail, a dedicated banked-reset voucher icon, and a prominent relative age make the real public grant history scannable at a glance. improved: The expiry tracker is now a secondary action beside the timeline; lifecycle updates remain distinct from grant count and never advance the normal reset clock."},{"@type":"ListItem","position":10,"name":"1.9.0.0 — Banked reset guide","url":"https://codex-reset.com/codexreset-release#v1-9-0-0","description":"new: /banked-reset explains the grant-versus-redemption boundary, the official Usage limit resets / Full reset labels in the Codex app and web Usage tab, 5-hour plus weekly effects, offer-specific expiry, and the six-event public ledger in four languages. improved: The home tracker now saves an exact banked-reset expiry instead of assuming 30 days, and /worth-it requires that expiry while keeping its weekly trade-off model explicit."},{"@type":"ListItem","position":11,"name":"1.8.1.0 — Banked resets stay banked","url":"https://codex-reset.com/codexreset-release#v1-8-1-0","description":"fixed: A global banked-reset grant now stays in the credits timeline and can no longer advance the last-reset time, count, cadence, forecast, poll or vigil. improved: Rare global banked grants ring Telegram and Discord with a distinct 🎟️ announcement that says they do not automatically refresh the current quota; Web Push remains verified-reset only."},{"@type":"ListItem","position":12,"name":"1.8.0.0 — Tibo routing and reset value","url":"https://codex-reset.com/codexreset-release#v1-8-0-0","description":"improved: Discord #alerts and Telegram @codexresetalerts now take only strict top-level completed global quota-reset claims immediately; each claim starts as quota not yet observed, then the Usage observer edits the same message to confirmed, no quota change observed, or unverified. improved: Discord #tibo and Telegram @Codex_Reset_Official now carry only reset announcements, hints, dated windows, related replies and context, plus a cadence forecast at 90% raw 24-hour probability; unrelated Tibo posts stay corpus-only. improved: The backend now separates Tibo's announcement (Axis A) from quota observation (Axis B), retains every observed non-retweet post and reply for 90 days, and exposes /api/tibo/signals publicly plus bearer-protected /api/tibo/posts for trusted consumers. new: /worth-it turns a pasted Codex `/status` weekly line or a custom window into remaining-versus-used quota, reset-now cost, and a practical spend-or-wait verdict. The calculation stays in the browser."},{"@type":"ListItem","position":13,"name":"1.7.0.1 — Navigation and freshness wording","url":"https://codex-reset.com/codexreset-release#v1-7-0-1","description":"improved: Every non-home header now links directly to /codex-usage while the home header stays at five compact links. fixed: The footer now distinguishes the two-minute feed check cadence from the date when tracked site content last changed."},{"@type":"ListItem","position":14,"name":"1.7.0.0 — Release notes","url":"https://codex-reset.com/codexreset-release#v1-7-0-0","description":"new: Public release notes at /codexreset-release: the version history plus a plain-language map of what every page, alert channel and public API does."},{"@type":"ListItem","position":15,"name":"1.6.0.0 — Alerts hub","url":"https://codex-reset.com/codexreset-release#v1-6-0-0","description":"new: The nav bell now opens one alerts hub holding every channel — browser push, the Telegram alert channel and the Discord #alerts stream — instead of linking a single one. improved: The browser notification permission has a single owner shared by the tracker alarm, the /codex-usage alarm and push, so one prompt covers all three."},{"@type":"ListItem","position":16,"name":"1.5.0.0 — Codex usage workbench","url":"https://codex-reset.com/codexreset-release#v1-5-0-0","description":"new: /codex-usage rebuilt as a two-pane workbench: paste your `codex /status` output and read your current cycle back — weekly window, burn pace and projected reset. The paste never leaves the browser. new: A community reset forecast poll on the same page; results unlock once five forecasts are in. improved: The paste parser reads OpenAI's boxed `/status` layout, including wrapped lines and dated resets such as \"12:35 on 8 Aug\"."},{"@type":"ListItem","position":17,"name":"1.4.1.0 — Browser push notifications","url":"https://codex-reset.com/codexreset-release#v1-4-1-0","description":"new: Web Push for verified resets, built payload-free with VAPID: the push message carries no content, and the browser fetches the details from this site when it wakes. No account, no email, nothing personal stored with the subscription. improved: Notifications fire only for a reset this site has verified, never for an unconfirmed rumor."},{"@type":"ListItem","position":18,"name":"1.4.0.0 — Discord alerts and Atom feed","url":"https://codex-reset.com/codexreset-release#v1-4-0-0","description":"new: Verified reset announcements relay into the community Discord #alerts channel, with a permanent invite in the alerts dock and the footer. new: An Atom feed at /feed.xml, discoverable from every page."},{"@type":"ListItem","position":19,"name":"1.3.0.0 — Codex Juice","url":"https://codex-reset.com/codexreset-release#v1-3-0-0","description":"new: /codex-juice: a task-first selector for the Codex model (Sol, Terra, Luna) and the Low–XHigh reasoning effort, published with the benchmark evidence it rests on. new: The same evidence as public JSON at /api/juice."},{"@type":"ListItem","position":20,"name":"1.2.0.0 — Tibo radar and Telegram alerts","url":"https://codex-reset.com/codexreset-release#v1-2-0-0","description":"new: /tibo tracks verified @thsottiaux signals and reset announcements on a card rail, alongside the community reset vigil. new: The @codexresetalerts Telegram channel posts one message per verified reset signal."},{"@type":"ListItem","position":21,"name":"1.1.0.0 — Four languages","url":"https://codex-reset.com/codexreset-release#v1-1-0-0","description":"new: English, 中文, 日本語 and Español, each with its own routes, hreflang matrix, share cards and localized public APIs."},{"@type":"ListItem","position":22,"name":"1.0.0.0 — Launch","url":"https://codex-reset.com/codexreset-release#v1-0-0-0","description":"new: codex-reset.com goes live, moving the project off codexreset.net: the reset forecast, personal 5-hour and weekly countdowns, /timeline, /radar and /status. new: Public read-only JSON from the start — /api/forecast, /api/timeline, /api/feed and /api/status-history — so the record stays checkable outside this site."}]}</script>
+  <script type="module" src="/assets/533e820a86/app.js"></script>
+</head>
+<body data-page="releases" data-locale="en">
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <canvas id="bg" aria-hidden="true"></canvas>
+  <div id="live" class="sr-only" role="status" aria-live="polite"></div>
+  
+  <header class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="/" aria-label="Codex Reset"><img class="brand-mark" src="/favicon.svg" width="24" height="24" alt="" aria-hidden="true"><span class="brand-wordmark"><span class="brand-initial">c</span>odex-<span class="brand-initial">r</span>eset.com</span></a>
+      <nav class="nav-links" aria-label="Sections">
+        <a href="/">home</a><a href="/timeline">timeline</a><a href="/banked-reset">banked</a><a href="/codex-usage">usage</a><a href="/tibo">🙏 tibo</a>
+      </nav>
+      <span class="nav-spacer"></span>
+      <div class="nav-actions">
+        <div class="nav-alerts" data-alerts-menu>
+        <button class="nav-tg" id="alerts-open" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="alerts-menu" title="Reset alerts — browser, email, Telegram, Discord" aria-label="Reset alerts — browser, email, Telegram, Discord"><span class="ui-icon" data-icon="bell" aria-hidden="true"></span>alerts</button>
+        <div class="alerts-menu" id="alerts-menu" role="group" aria-label="Reset alerts — browser, email, Telegram, Discord">
+          <a class="alerts-channel" href="https://t.me/codexresetalerts" rel="noopener" target="_blank" aria-label="Telegram alerts channel — regular resets, strong Watches, and qualifying banked updates"><span class="ui-icon" data-icon="telegram" aria-hidden="true"></span><span>Telegram alerts channel</span></a>
+          <a class="alerts-channel" href="https://discord.gg/E6CCfuKwYu" rel="noopener" target="_blank" aria-label="Discord server — reset alerts and community"><span class="ui-icon" data-icon="discord" aria-hidden="true"></span><span>Discord server</span></a>
+          
+          <a class="alerts-channel" href="https://notify.codex-reset.com/" rel="noopener" target="_blank" aria-label="Email alerts — open the independent subscription page"><span class="ui-icon" data-icon="mail" aria-hidden="true"></span><span>Email alerts</span></a>
+          <span class="push-cta" data-push hidden
+      data-label-subscribe="Turn on notifications"
+      data-label-subscribed="Notifications on — tap to turn off"
+      data-label-blocked="Notifications are blocked for this site. Re-allow them in your browser settings to subscribe."
+      data-label-ios-install="On iPhone, add this site to your Home Screen first, then open it from there."
+      data-label-unsupported="This browser does not support push notifications."
+      data-label-error="Something went wrong. Try again."
+      title="Wake this browser for the latest regular Reset, 83%/93% strong Watch, or qualifying banked update; Events may collapse to latest state. No account needed."><button class="icon-link push-button" type="button" data-push-button hidden></button><span class="push-note" data-push-note hidden></span></span>
+          <p class="alerts-note">Post-fence alerts cover regular global Resets, 83%/93% strong Watches, and qualifying global banked lifecycle updates on their separate route.</p>
+        </div>
+      </div>
+        <button class="palette-trigger" id="palette-open" type="button" aria-label="/ cmd — open command palette">/ cmd</button>
+      </div>
+    </div>
+  </header>
+  <div class="outage" id="outage" hidden aria-live="polite">
+    <span class="outage-tag">OPENAI INCIDENT</span>
+    <span class="outage-body" id="outage-body"></span>
+  </div>
+  
+  <main class="page-shell releases-page" id="main-content">
+    <section class="hero page-hero">
+      <p class="eyebrow">RELEASE NOTES</p>
+      <h1>Release Notes <span class="release-badge">1.10.1.0</span></h1>
+      <p class="tagline">codex-reset.com (formerly <a href="https://codexreset.net/">codexreset.net</a>) is a free, independent tracker for OpenAI Codex usage-limit resets. It records every verified global reset announcement, forecasts when the next one could land, and runs personal 5-hour and weekly countdowns entirely inside your browser. It is not built, endorsed, or reviewed by OpenAI, it never sees your OpenAI account, and it needs no sign-up.</p>
+    </section>
+
+    <section class="win" aria-labelledby="releases-map-title">
+      <div class="term-bar">
+        <span class="dot red" aria-hidden="true"></span><span class="dot amber" aria-hidden="true"></span><span class="dot green" aria-hidden="true"></span>
+        <span class="term-title">codex-reset --what-is-this</span>
+      </div>
+      <div class="win-body">
+        <h2 class="block-title" id="releases-map-title">What each surface does</h2>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="Site surfaces">
+          <table>
+            <thead>
+              <tr><th>Path</th><th>Surface</th><th>What it does</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><a href="/">/</a></td>
+                <td>Reset forecast</td>
+                <td>Answers &quot;will Codex reset today?&quot; with the last verified global reset, a 24h/48h probability, and personal 5-hour, weekly and banked-reset countdowns that stay in local storage.</td>
+              </tr>
+              <tr>
+                <td><a href="/timeline">/timeline</a></td>
+                <td>Reset timeline</td>
+                <td>Every verified reset, boost, unlock and banked-reset announcement, with timezone-aware charts, filters and a sortable table.</td>
+              </tr>
+              <tr>
+                <td><a href="/radar">/radar</a></td>
+                <td>Signal radar</td>
+                <td>Live model configuration, OpenAI service health, reset events and limit signals in one evidence-labeled feed.</td>
+              </tr>
+              <tr>
+                <td><a href="/codex-usage">/codex-usage</a></td>
+                <td>Usage workbench</td>
+                <td>What every block of OpenAI's Codex usage dashboard means, plus a browser-only analyzer: paste your `codex /status` output and get your weekly window, burn pace and projected reset back.</td>
+              </tr>
+              <tr>
+                <td><a href="/worth-it">/worth-it</a></td>
+                <td>Reset value calculator</td>
+                <td>Whether a given reset actually helped you: it weighs the quota a reset hands back against the weekly window it restarts, scores a hypothetical reset at any moment in the next seven days, and advises whether to spend or hold a banked reset.</td>
+              </tr>
+              <tr>
+                <td><a href="/banked-reset">/banked-reset</a></td>
+                <td>Banked reset guide</td>
+                <td>The latest public banked-reset signal, a lifecycle timeline that separates updates from grants, exact-expiry tracking, redemption mechanics, and the historical grant/context ledger.</td>
+              </tr>
+              <tr>
+                <td><a href="/codex-juice">/codex-juice</a></td>
+                <td>Model &amp; effort selector</td>
+                <td>Which Codex model (Astra, Sol, Terra, Luna) and which Low–XHigh reasoning effort fits a task, with the public evidence behind each recommendation.</td>
+              </tr>
+              <tr>
+                <td><a href="/status">/status</a></td>
+                <td>Status &amp; compensation</td>
+                <td>Live Codex service state, official incident history, public recovery times, and which resets OpenAI explicitly linked to an outage.</td>
+              </tr>
+              <tr>
+                <td><a href="/tibo">/tibo</a></td>
+                <td>Tibo radar</td>
+                <td>Verified @thsottiaux signals, the reset announcement rail, and the community reset vigil.</td>
+              </tr>
+              <tr>
+                <td><a href="/feed.xml">/feed.xml</a></td>
+                <td>Atom feed</td>
+                <td>Verified announcements as a standard Atom feed, for readers and crawlers.</td>
+              </tr>
+              <tr>
+                <td><a href="https://status.codex-reset.com/">status.codex-reset.com</a></td>
+                <td>System status</td>
+                <td>Live operational health for alert delivery and the data pipeline.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="table-note">Public JSON: <a href="/api/forecast">/api/forecast</a> · <a href="/api/timeline">/api/timeline</a> · <a href="/api/status-history">/api/status-history</a> · <a href="/api/feed">/api/feed</a> · <a href="/api/juice">/api/juice</a> · <a href="/api/effort-evidence">/api/effort-evidence</a> · <a href="/api/usage-reference">/api/usage-reference</a> · <a href="/api/pray">/api/pray</a>. Public GET responses require no key and allow cross-origin reads; /api/pray also accepts bounded interactions from /tibo.</p>
+        <p class="table-note">Optional machine guides: <a href="/llms.txt">/llms.txt</a> provides a curated route map, while <a href="/llms-full.txt">/llms-full.txt</a> adds source priority, provenance, the limit reference and a recent release summary. The complete public release ledger remains on this page. Search discovery still depends on the normal HTML, robots and sitemap surfaces.</p>
+
+        <h2 class="block-title">Alert channels</h2>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="Alert channels">
+          <table>
+            <thead>
+              <tr><th>Channel</th><th>Where</th><th>Status</th><th>What it sends</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Telegram alerts</td>
+                <td><a href="https://t.me/codexresetalerts">@codexresetalerts</a></td>
+                <td>live</td>
+                <td>Alert v3 owns post-fence regular global Resets and strong Watches (93% with timing, otherwise 83%); qualifying global banked lifecycle updates retain their separate banked receipt route.</td>
+              </tr>
+              <tr>
+                <td>Discord alerts</td>
+                <td><a href="https://discord.gg/E6CCfuKwYu">#alerts</a></td>
+                <td>live</td>
+                <td>The same post-fence regular Reset/strong Watch Event as Telegram, plus the independent banked lifecycle route; at-or-below-fence history cannot replay.</td>
+              </tr>
+              <tr>
+                <td>Email alerts</td>
+                <td><a href="https://notify.codex-reset.com/">notify.codex-reset.com</a></td>
+                <td>live</td>
+                <td>Double-opt-in transactional email consuming the latest selected public Alert. Delivery is batched and at-most-once, with no open or click tracking; instant channels can arrive first.</td>
+              </tr>
+              <tr>
+                <td>Telegram Tibo</td>
+                <td><a href="https://t.me/Codex_Reset_Official">@Codex_Reset_Official</a></td>
+                <td>live</td>
+                <td>The community stream remains live. Post-fence #tibo is an independent silent content stream and never waits for or mirrors #alerts.</td>
+              </tr>
+              <tr>
+                <td>Discord Tibo</td>
+                <td><a href="https://discord.gg/E6CCfuKwYu">#tibo</a></td>
+                <td>live</td>
+                <td>The community stream remains live. Post-fence #tibo is an independent low-noise Tibo stream with its own post receipts and no Alert mirror.</td>
+              </tr>
+              <tr>
+                <td>Browser push</td>
+                <td>alerts hub</td>
+                <td>live</td>
+                <td>Payload-free latest-state wake for post-fence regular Reset/83%/93% strong Watch state and qualifying global banked lifecycle updates; history never replays.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="table-note">Telegram alerts, Discord #alerts, Email alerts and compatible Browser Push share one strict boundary: regular global resets and strong Watches at 83% or 93%; qualifying banked updates retain their independent receipt route. Tibo community channels are a separate silent content stream.</p>
+      </div>
+    </section>
+
+    <section aria-labelledby="releases-log-title">
+      <h2 class="block-title" id="releases-log-title">Version history</h2>
+      <p class="section-intro">Newest first. Versions read MAJOR.MINOR.PATCH.BUILD — a new minor is a new public surface, a new patch changes how an existing one behaves, and a build is a fix or a copy correction. Dates are production deploys.</p>
+      <ol class="release-log">
+        <li class="release-entry" id="v1-10-1-0">
+          <div class="release-meta">
+            <span class="release-version">1.10.1.0</span>
+            <time class="release-date" datetime="2026-09-06">2026-09-06</time>
+            
+          </div>
+          <h3 class="release-title">GPT-6 Astra: limits, plan access and the model selector</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="improved">improved</span>/codex-usage quotes OpenAI's current per-model 5-hour estimates with GPT-6 Astra on top (5–45 local messages on Plus, about half of Sol), the revised Sol, Terra and Luna ranges, Astra's 2.5× credit rate, and Astra reaching every Plus and Business user on Sep 4, 2026.</li>
+            <li><span class="release-tag" data-type="fixed">fixed</span>The 5-hour limit status records the Plus return Tibo announced on Aug 25, 2026 instead of claiming the July lift is still in force.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>/codex-juice recommends Astra for ambiguous or high-risk work, escalates Sol to Astra when verification is hard or quality wins, and states the allowance cost; the effort evidence stays on GPT-5.6 Sol until NixBench publishes Astra rows.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-10-0-0">
+          <div class="release-meta">
+            <span class="release-version">1.10.0.0</span>
+            <time class="release-date" datetime="2026-08-30">2026-08-30</time>
+            <span class="release-status">live · post-fence owner</span>
+          </div>
+          <h3 class="release-title">Alert v3: one decision, one Event, independent #tibo</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="fixed">fixed</span>Alert v3 owns post-fence regular global Resets and strong Watches: one decision function, one immutable Event, a Durable Object single writer, and independent Telegram, Discord and payload-free Web Push receipts.</li>
+            <li><span class="release-tag" data-type="fixed">fixed</span>The homepage now keeps the exact 83%/93% commitment probability and the vote link to /codex-usage#reset-poll through both server rendering and client hydration.</li>
+            <li><span class="release-tag" data-type="fixed">fixed</span>Day-level Alert deadlines now count down to the latest stated window boundary and explain that the real reset may happen earlier, instead of presenting the boundary as an announced exact reset time.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>Tibo surfaces now use his latest reviewed X profile portrait, pinned by URL, dimensions and SHA-256 so future remote profile changes cannot silently alter the site asset.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>#tibo remains independent, historical events cannot replay, and the separate pure-banked alert route keeps its Telegram, Discord and Browser Push behavior without becoming a regular Reset Event.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-9-6-1">
+          <div class="release-meta">
+            <span class="release-version">1.9.6.1</span>
+            <time class="release-date" datetime="2026-08-28">2026-08-28</time>
+            
+          </div>
+          <h3 class="release-title">Email alerts channel record</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="fixed">fixed</span>The release page now lists Email alerts at notify.codex-reset.com as a live strict #alerts channel instead of describing only the alerts-dock shortcut.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>The channel record now states the existing service's double opt-in, batched and at-most-once delivery, and no open or click tracking; Telegram, Discord and Browser Push can arrive first.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-9-6-0">
+          <div class="release-meta">
+            <span class="release-version">1.9.6.0</span>
+            <time class="release-date" datetime="2026-08-25">2026-08-25</time>
+            
+          </div>
+          <h3 class="release-title">Tibo reset rationale and alert actions</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="improved">improved</span>/tibo now explains why OpenAI keeps resetting Codex limits, separating compensation after a bad experience, milestone rollouts, and capacity/efficiency as three sourced reasons with a timestamped Tibo interview link and an explicit evidence boundary.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>/banked-reset now offers a localized X share plea on the latest banked signal card, with the elapsed time since the last banked reset baked into the share text and refreshed live after hydration.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>The bottom-right alerts dock now includes a direct mail shortcut to the existing notify.codex-reset.com Email alerts page alongside Telegram and Discord.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-9-5-0">
+          <div class="release-meta">
+            <span class="release-version">1.9.5.0</span>
+            <time class="release-date" datetime="2026-08-25">2026-08-25</time>
+            
+          </div>
+          <h3 class="release-title">Permanent banked status strip</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="fixed">fixed</span>The homepage BANKED strip no longer disappears after 72 hours; the newest actionable banked update stays visible until a newer one replaces it, with its age disclosed by the timestamp.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>The static /banked-reset bake now ships the arriving and available lifecycle events in all four languages, so the first paint already shows the truthful AVAILABLE state before JavaScript hydrates.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-9-4-0">
+          <div class="release-meta">
+            <span class="release-version">1.9.4.0</span>
+            <time class="release-date" datetime="2026-08-23">2026-08-23</time>
+            
+          </div>
+          <h3 class="release-title">Official-window countdown</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="new">new</span>The home page now shows a second-level electronic estimated-reset clock when Tibo publishes a valid official window no wider than two hours; it targets the window midpoint and always keeps the estimate language explicit.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>Dismissal is scoped to the exact tweet and time boundaries, so the same event stays hidden after refresh while a new post or revised official window appears again automatically.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-9-3-0">
+          <div class="release-meta">
+            <span class="release-version">1.9.3.0</span>
+            <time class="release-date" datetime="2026-08-23">2026-08-23</time>
+            
+          </div>
+          <h3 class="release-title">Five-minute alert resilience</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="fixed">fixed</span>A five-minute safety check now requires two matching observations, then hands a fresh missed Tibo post to the standard Telegram, Discord, Browser Push, timeline, forecast and Atom receipt chain.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>Exact post IDs, equivalent 15-minute text/windows and per-channel receipts prevent duplicate alerts even when the primary path wins between the first and second observation.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>Radar now reads the canonical official forecast signal, no-JavaScript home HTML receives the full live forecast state, and active-signal or just-reset pages refresh once a minute.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-9-2-0">
+          <div class="release-meta">
+            <span class="release-version">1.9.2.0</span>
+            <time class="release-date" datetime="2026-08-23">2026-08-23</time>
+            
+          </div>
+          <h3 class="release-title">Browser Push follows #alerts</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="fixed">fixed</span>The exact Tibo wording ‘Reset will land around 14pm PST tomorrow’ now resolves to an actionable 2 PM PT commitment instead of silent context.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>Browser Push now shares the #alerts routing boundary: strict reset announcements, actionable dated commitments, and qualifying global banked-reset updates each own an independent push receipt.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>Payload-free notifications fetch the exact current alert from codex-reset.com; an active v2 Service Worker gate keeps legacy workers on reset-only delivery until they can render broader alerts truthfully.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-9-1-0">
+          <div class="release-meta">
+            <span class="release-version">1.9.1.0</span>
+            <time class="release-date" datetime="2026-08-22">2026-08-22</time>
+            
+          </div>
+          <h3 class="release-title">Live banked evidence</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="improved">improved</span>/banked-reset now leads with the latest public banked signal and a recent lifecycle timeline instead of opening as a documentation-heavy guide.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>A five-drop grant rail, a dedicated banked-reset voucher icon, and a prominent relative age make the real public grant history scannable at a glance.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>The expiry tracker is now a secondary action beside the timeline; lifecycle updates remain distinct from grant count and never advance the normal reset clock.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-9-0-0">
+          <div class="release-meta">
+            <span class="release-version">1.9.0.0</span>
+            <time class="release-date" datetime="2026-08-22">2026-08-22</time>
+            
+          </div>
+          <h3 class="release-title">Banked reset guide</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="new">new</span>/banked-reset explains the grant-versus-redemption boundary, the official Usage limit resets / Full reset labels in the Codex app and web Usage tab, 5-hour plus weekly effects, offer-specific expiry, and the six-event public ledger in four languages.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>The home tracker now saves an exact banked-reset expiry instead of assuming 30 days, and /worth-it requires that expiry while keeping its weekly trade-off model explicit.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-8-1-0">
+          <div class="release-meta">
+            <span class="release-version">1.8.1.0</span>
+            <time class="release-date" datetime="2026-08-21">2026-08-21</time>
+            
+          </div>
+          <h3 class="release-title">Banked resets stay banked</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="fixed">fixed</span>A global banked-reset grant now stays in the credits timeline and can no longer advance the last-reset time, count, cadence, forecast, poll or vigil.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>Rare global banked grants ring Telegram and Discord with a distinct 🎟️ announcement that says they do not automatically refresh the current quota; Web Push remains verified-reset only.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-8-0-0">
+          <div class="release-meta">
+            <span class="release-version">1.8.0.0</span>
+            <time class="release-date" datetime="2026-08-09">2026-08-09</time>
+            
+          </div>
+          <h3 class="release-title">Tibo routing and reset value</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="improved">improved</span>Discord #alerts and Telegram @codexresetalerts now take only strict top-level completed global quota-reset claims immediately; each claim starts as quota not yet observed, then the Usage observer edits the same message to confirmed, no quota change observed, or unverified.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>Discord #tibo and Telegram @Codex_Reset_Official now carry only reset announcements, hints, dated windows, related replies and context, plus a cadence forecast at 90% raw 24-hour probability; unrelated Tibo posts stay corpus-only.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>The backend now separates Tibo's announcement (Axis A) from quota observation (Axis B), retains every observed non-retweet post and reply for 90 days, and exposes /api/tibo/signals publicly plus bearer-protected /api/tibo/posts for trusted consumers.</li>
+            <li><span class="release-tag" data-type="new">new</span>/worth-it turns a pasted Codex `/status` weekly line or a custom window into remaining-versus-used quota, reset-now cost, and a practical spend-or-wait verdict. The calculation stays in the browser.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-7-0-1">
+          <div class="release-meta">
+            <span class="release-version">1.7.0.1</span>
+            <time class="release-date" datetime="2026-08-04">2026-08-04</time>
+            
+          </div>
+          <h3 class="release-title">Navigation and freshness wording</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="improved">improved</span>Every non-home header now links directly to /codex-usage while the home header stays at five compact links.</li>
+            <li><span class="release-tag" data-type="fixed">fixed</span>The footer now distinguishes the two-minute feed check cadence from the date when tracked site content last changed.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-7-0-0">
+          <div class="release-meta">
+            <span class="release-version">1.7.0.0</span>
+            <time class="release-date" datetime="2026-08-03">2026-08-03</time>
+            
+          </div>
+          <h3 class="release-title">Release notes</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="new">new</span>Public release notes at /codexreset-release: the version history plus a plain-language map of what every page, alert channel and public API does.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-6-0-0">
+          <div class="release-meta">
+            <span class="release-version">1.6.0.0</span>
+            <time class="release-date" datetime="2026-08-03">2026-08-03</time>
+            
+          </div>
+          <h3 class="release-title">Alerts hub</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="new">new</span>The nav bell now opens one alerts hub holding every channel — browser push, the Telegram alert channel and the Discord #alerts stream — instead of linking a single one.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>The browser notification permission has a single owner shared by the tracker alarm, the /codex-usage alarm and push, so one prompt covers all three.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-5-0-0">
+          <div class="release-meta">
+            <span class="release-version">1.5.0.0</span>
+            <time class="release-date" datetime="2026-08-02">2026-08-02</time>
+            
+          </div>
+          <h3 class="release-title">Codex usage workbench</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="new">new</span>/codex-usage rebuilt as a two-pane workbench: paste your `codex /status` output and read your current cycle back — weekly window, burn pace and projected reset. The paste never leaves the browser.</li>
+            <li><span class="release-tag" data-type="new">new</span>A community reset forecast poll on the same page; results unlock once five forecasts are in.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>The paste parser reads OpenAI's boxed `/status` layout, including wrapped lines and dated resets such as &quot;12:35 on 8 Aug&quot;.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-4-1-0">
+          <div class="release-meta">
+            <span class="release-version">1.4.1.0</span>
+            <time class="release-date" datetime="2026-08-01">2026-08-01</time>
+            <span class="release-status">live</span>
+          </div>
+          <h3 class="release-title">Browser push notifications</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="new">new</span>Web Push for verified resets, built payload-free with VAPID: the push message carries no content, and the browser fetches the details from this site when it wakes. No account, no email, nothing personal stored with the subscription.</li>
+            <li><span class="release-tag" data-type="improved">improved</span>Notifications fire only for a reset this site has verified, never for an unconfirmed rumor.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-4-0-0">
+          <div class="release-meta">
+            <span class="release-version">1.4.0.0</span>
+            <time class="release-date" datetime="2026-08-01">2026-08-01</time>
+            
+          </div>
+          <h3 class="release-title">Discord alerts and Atom feed</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="new">new</span>Verified reset announcements relay into the community Discord #alerts channel, with a permanent invite in the alerts dock and the footer.</li>
+            <li><span class="release-tag" data-type="new">new</span>An Atom feed at /feed.xml, discoverable from every page.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-3-0-0">
+          <div class="release-meta">
+            <span class="release-version">1.3.0.0</span>
+            <time class="release-date" datetime="2026-07-31">2026-07-31</time>
+            
+          </div>
+          <h3 class="release-title">Codex Juice</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="new">new</span>/codex-juice: a task-first selector for the Codex model (Sol, Terra, Luna) and the Low–XHigh reasoning effort, published with the benchmark evidence it rests on.</li>
+            <li><span class="release-tag" data-type="new">new</span>The same evidence as public JSON at /api/juice.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-2-0-0">
+          <div class="release-meta">
+            <span class="release-version">1.2.0.0</span>
+            <time class="release-date" datetime="2026-07-28">2026-07-28</time>
+            
+          </div>
+          <h3 class="release-title">Tibo radar and Telegram alerts</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="new">new</span>/tibo tracks verified @thsottiaux signals and reset announcements on a card rail, alongside the community reset vigil.</li>
+            <li><span class="release-tag" data-type="new">new</span>The @codexresetalerts Telegram channel posts one message per verified reset signal.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-1-0-0">
+          <div class="release-meta">
+            <span class="release-version">1.1.0.0</span>
+            <time class="release-date" datetime="2026-07-26">2026-07-26</time>
+            
+          </div>
+          <h3 class="release-title">Four languages</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="new">new</span>English, 中文, 日本語 and Español, each with its own routes, hreflang matrix, share cards and localized public APIs.</li>
+          </ul>
+        </li>
+        <li class="release-entry" id="v1-0-0-0">
+          <div class="release-meta">
+            <span class="release-version">1.0.0.0</span>
+            <time class="release-date" datetime="2026-07-25">2026-07-25</time>
+            
+          </div>
+          <h3 class="release-title">Launch</h3>
+          <ul class="release-changes">
+            <li><span class="release-tag" data-type="new">new</span>codex-reset.com goes live, moving the project off <a href="https://codexreset.net/">codexreset.net</a>: the reset forecast, personal 5-hour and weekly countdowns, /timeline, /radar and /status.</li>
+            <li><span class="release-tag" data-type="new">new</span>Public read-only JSON from the start — /api/forecast, /api/timeline, /api/feed and /api/status-history — so the record stays checkable outside this site.</li>
+          </ul>
+        </li>
+      </ol>
+    </section>
+  </main>
+  
+  <dialog id="dlg-palette" aria-label="Command palette">
+    <div class="dlg-inner">
+      <input class="palette-input" id="palette-input" type="text" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list" placeholder="type a command…" autocomplete="off" spellcheck="false">
+      <ul class="palette-list" id="palette-list" role="listbox" aria-label="Commands"></ul>
+    </div>
+  </dialog>
+  
+  <footer class="site-footer">
+    <a class="brand footer-brand" href="/" aria-label="Codex Reset"><span class="tilde" aria-hidden="true">~/</span>Codex Reset</a>
+    <a class="pill" id="status-pill" data-level="dim" href="/status" aria-label="openai status">codex: checking live</a>
+    
+    <span class="comment">Codex Reset — an independent tracker built for the Codex community, codex-reset.com</span>
+    <span class="comment">not affiliated with OpenAI · &quot;Codex&quot; is a trademark of OpenAI</span>
+    <span class="comment">feed checks ~every 2 min · timers live in your browser only · site content updated <time id="content-updated" datetime="2026-09-04">2026-09-04</time></span>
+    <span class="comment">Public APIs: <a href="/api/forecast">/api/forecast</a> · <a href="/api/timeline">/api/timeline</a> · <a href="/api/status-history">/api/status-history</a> · <a href="/api/feed">/api/feed</a> · <a href="/api/juice">/api/juice</a> · <a href="/api/effort-evidence">/api/effort-evidence</a></span>
+    <div class="footer-links">
+      <a href="/codex-usage">codex usage</a>
+      <a href="/worth-it">worth it?</a>
+      <a href="/banked-reset">banked reset</a>
+      <a href="/codex-juice">codex juice</a>
+      <a href="/status">status</a>
+      <a href="/feed.xml">Atom feed</a>
+      <a href="/codexreset-release">release notes</a>
+      <a href="/terms">terms</a>
+      <a href="/privacy">privacy</a>
+    </div>
+    <div class="footer-links footer-reach">
+      <a href="mailto:hello@codex-reset.com" title="Suggestions, corrections, removal requests — hello@codex-reset.com" aria-label="Suggestions, corrections, removal requests — hello@codex-reset.com">hello@codex-reset.com</a>
+      <a class="icon-link" href="https://t.me/codexresetalerts" rel="noopener" target="_blank">telegram alerts</a>
+      <a class="icon-link" href="https://notify.codex-reset.com/" rel="noopener" target="_blank">email alerts</a>
+      <a class="icon-link" href="https://discord.gg/E6CCfuKwYu" rel="noopener" target="_blank">Discord alerts</a>
+      <a class="icon-link" href="https://x.com/codex_reset" rel="noopener" target="_blank">@codex_reset</a>
+      <span>99.99% vibing by <a href="https://openai.com/codex/" rel="noopener" target="_blank">codex</a></span>
+    </div>
+  </footer>
+  
+  <div class="dock-shell">
+  <nav class="tg-dock" aria-label="Alert channels">
+    <a class="dock-link dock-alerts" href="https://t.me/codexresetalerts" rel="noopener" target="_blank" aria-label="Telegram alerts channel — regular resets, strong Watches, and qualifying banked updates" title="Telegram alerts channel — regular resets, strong Watches, and qualifying banked updates"><span class="dock-label">telegram</span><span class="ui-icon" data-icon="telegram" aria-hidden="true"></span></a>
+    <a class="dock-link dock-discord" href="https://discord.gg/E6CCfuKwYu" rel="noopener" target="_blank" aria-label="Discord server — reset alerts and community" title="Discord server — reset alerts and community"><span class="dock-label">discord</span><span class="ui-icon" data-icon="discord" aria-hidden="true"></span></a>
+    <a class="dock-link dock-email" href="https://notify.codex-reset.com/" rel="noopener" target="_blank" aria-label="Email alerts — reset notifications by email at notify.codex-reset.com" title="Email alerts — reset notifications by email at notify.codex-reset.com"><span class="dock-label">email</span><span class="ui-icon" data-icon="mail" aria-hidden="true"></span></a>
+    <a class="dock-link dock-chat" href="https://t.me/Codex_Reset_Official" rel="noopener" target="_blank" aria-label="Telegram community chat — discuss resets" title="Telegram community chat — discuss resets"><span class="dock-label">chat</span><span class="ui-icon" data-icon="users" aria-hidden="true"></span></a>
+  </nav>
+  </div>
+<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a3976f3be87055c7',t:'MTc4OTEzNzY5OQ=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>

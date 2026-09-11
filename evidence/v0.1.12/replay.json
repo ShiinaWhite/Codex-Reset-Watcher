@@ -1,0 +1,83 @@
+[
+  {
+    "id": "2097752790177370535",
+    "banked_state": "unknown",
+    "reset_kind": "banked",
+    "tg_delivery_evidence": "sent",
+    "old_extraction": "silent",
+    "new_production_behavior": "not_implemented_contract_gap",
+    "present_in_current_push_record": true
+  },
+  {
+    "id": "2096035437299237298",
+    "banked_state": "arriving",
+    "reset_kind": "banked",
+    "tg_delivery_evidence": "sent",
+    "old_extraction": "eligible",
+    "new_production_behavior": "not_implemented_contract_gap",
+    "present_in_current_push_record": false
+  },
+  {
+    "id": "2095979536043401428",
+    "banked_state": "arriving",
+    "reset_kind": "banked",
+    "tg_delivery_evidence": "sent",
+    "old_extraction": "eligible",
+    "new_production_behavior": "not_implemented_contract_gap",
+    "present_in_current_push_record": false
+  },
+  {
+    "id": "2095651088502591861",
+    "banked_state": "announced",
+    "reset_kind": "banked",
+    "tg_delivery_evidence": "sent",
+    "old_extraction": "eligible",
+    "new_production_behavior": "not_implemented_contract_gap",
+    "present_in_current_push_record": false
+  },
+  {
+    "id": "2090964822422949999",
+    "banked_state": "available",
+    "reset_kind": "banked",
+    "tg_delivery_evidence": "unknown",
+    "old_extraction": "eligible",
+    "new_production_behavior": "not_implemented_contract_gap",
+    "present_in_current_push_record": false
+  },
+  {
+    "id": "2090947196107764189",
+    "banked_state": "arriving",
+    "reset_kind": "banked",
+    "tg_delivery_evidence": "sent",
+    "old_extraction": "eligible",
+    "new_production_behavior": "not_implemented_contract_gap",
+    "present_in_current_push_record": false
+  },
+  {
+    "id": "2090766694897619318",
+    "banked_state": "announced",
+    "reset_kind": "banked",
+    "tg_delivery_evidence": "sent",
+    "old_extraction": "eligible",
+    "new_production_behavior": "not_implemented_contract_gap",
+    "present_in_current_push_record": false
+  },
+  {
+    "id": "2076735790567338203",
+    "banked_state": "unknown",
+    "reset_kind": null,
+    "tg_delivery_evidence": "unknown",
+    "old_extraction": "silent",
+    "new_production_behavior": "not_implemented_contract_gap",
+    "present_in_current_push_record": false
+  },
+  {
+    "id": "2076418567143408112",
+    "banked_state": "unknown",
+    "reset_kind": null,
+    "tg_delivery_evidence": "unknown",
+    "old_extraction": "silent",
+    "new_production_behavior": "not_implemented_contract_gap",
+    "present_in_current_push_record": false
+  }
+]
