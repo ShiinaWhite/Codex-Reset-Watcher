@@ -77,7 +77,7 @@ enabled = true            # 是否启用中文翻译
 model_task = "replyer"    # WebUI 推荐选择：replyer / planner / utils
 ```
 
-完整默认值见 [config.toml](config.toml)。
+完整默认配置示例见 [config.example.toml](config.example.toml)。实际 `config.toml` 由 MaiBot 在运行时根据插件配置模型生成和维护，无需手动放置。
 
 ## 多群支持
 
