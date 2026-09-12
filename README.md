@@ -56,7 +56,7 @@
 ### 方式二：手动安装
 
 1. 下载或克隆本仓库；
-2. 将 `codex_reset_watcher/` 文件夹放入 MaiBot 的插件目录；
+2. 在 MaiBot 的插件目录（plugins/）下直接 clone 本仓库，或将整个仓库目录放入插件目录；
 3. 让 MaiBot 加载并启用插件；
 4. 在 WebUI 中配置接收提醒的 QQ 群。
 
@@ -77,7 +77,7 @@ enabled = true            # 是否启用中文翻译
 model_task = "replyer"    # WebUI 推荐选择：replyer / planner / utils
 ```
 
-完整默认值见 [config.toml](codex_reset_watcher/config.toml)。
+完整默认值见 [config.toml](config.toml)。
 
 ## 多群支持
 
@@ -162,5 +162,5 @@ v0.1.12 主要修复了一类真实发生过的 Banked 漏报。
 
 - 问题与建议：[GitHub Issues](https://github.com/ShiinaWhite/Codex-Reset-Watcher/issues)
 - 开源协议：[MIT](LICENSE)
-- 插件代码：[plugin.py](codex_reset_watcher/plugin.py)
-- 插件清单：[_manifest.json](codex_reset_watcher/_manifest.json)
+- 插件代码：[plugin.py](plugin.py)
+- 插件清单：[_manifest.json](_manifest.json)

@@ -9,7 +9,7 @@
     "llm.generate",
     "send.text"
   ],
-  "description": "监控 OpenAI Codex 全局额度重置与 Banked Reset 生命周期（结构化事件主源），镜像上游用户告警，向 QQ 群发送北京时间通知",
+  "description": "自动监控 OpenAI Codex 全局额度重置、Banked Reset 与相关告警，翻译成中文并发送到指定 QQ 群",
   "display": {
     "icon": {
       "type": "lucide",
@@ -22,7 +22,6 @@
   },
   "i18n": {
     "default_locale": "zh-CN",
-    "locales_path": "_locales",
     "supported_locales": [
       "zh-CN"
     ]

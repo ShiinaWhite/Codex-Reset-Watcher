@@ -23,8 +23,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import codex_reset_watcher.plugin as plugin_module  # noqa: E402
-from codex_reset_watcher.plugin import (  # noqa: E402
+import plugin as plugin_module  # noqa: E402
+from plugin import (  # noqa: E402
     BANKED_NOTICE_TITLE,
     CONTRACT_PROMPT,
     CodexResetWatcher,
@@ -301,7 +301,7 @@ def test_current_payload_structured_log(tmp_path, caplog):
 
     plugin = _make_plugin(tmp_path)
     current = _probe("probe2_tibo_current.json")
-    with caplog.at_level(logging.INFO, logger="codex_reset_watcher.plugin"):
+    with caplog.at_level(logging.INFO, logger="plugin"):
         _wired_conclusion(plugin, current, {"data": []}, None)
     assert (
         "Tibo 监控：当前无待执行的重置计划｜最近状态：已确认｜验证：直接确认"
@@ -397,7 +397,7 @@ def test_probe_real_feed_reason_via_wiring(tmp_path):
 
 def test_codex_conclusion_extractor_removed():
     """Codex forecast 提取器已删除：import 即失败才是预期。"""
-    import codex_reset_watcher.plugin as plugin
+    import plugin as plugin
 
     assert not hasattr(plugin, "conclusion_from_forecast")
 
@@ -1886,7 +1886,7 @@ def test_age_guard_already_recorded_key_next_round_fully_silent(
     _wire_feed(plugin, feed)
 
     state_before = copy.deepcopy(plugin._state)
-    with caplog.at_level(logging.INFO, logger="codex_reset_watcher.plugin"):
+    with caplog.at_level(logging.INFO, logger="plugin"):
         asyncio.run(plugin._check_once())
         asyncio.run(plugin._check_once())
 
@@ -1911,7 +1911,7 @@ def test_age_guard_first_encounter_logs_once_then_silent(
     feed = _probe("probe_cr_feed.json")
     _wire_feed(plugin, feed)
 
-    with caplog.at_level(logging.INFO, logger="codex_reset_watcher.plugin"):
+    with caplog.at_level(logging.INFO, logger="plugin"):
         asyncio.run(plugin._check_once())
         assert plugin._ctx.send.sent_messages == []
         assert len(_gstate(plugin)["notified_keys"]) == 7
@@ -3263,7 +3263,7 @@ def test_manifest_declares_llm_capabilities():
     注册，未声明即被拒）；v0.1.11 起 model_task 改为固定推荐单选，动态
     枚举已移除 → llm.get_available_models 不再声明。"""
     manifest = json.load(open(
-        Path(__file__).resolve().parent / "codex_reset_watcher" / "_manifest.json",
+        Path(__file__).resolve().parent / "_manifest.json",
         encoding="utf-8",
     ))
     caps = manifest["capabilities"]
@@ -3673,7 +3673,7 @@ def test_confirmation_primary_uses_provider_full_text(tmp_path):
 
 def test_confirmation_short_message_omits_unparseable_observed_at(tmp_path):
     """observed_at 不可解析 → 省略时间行（只用可靠 observed_at）。"""
-    from codex_reset_watcher.plugin import build_confirm_effective_message
+    from plugin import build_confirm_effective_message
     assert build_confirm_effective_message("not-a-date") == "✅ Codex 额度重置已确认生效"
     assert build_confirm_effective_message(None) == "✅ Codex 额度重置已确认生效"
 
@@ -4308,7 +4308,7 @@ def test_model_task_schema_never_falls_back_to_free_text(tmp_path, monkeypatch):
 def test_model_task_no_dynamic_host_enumeration(tmp_path):
     """动态枚举复杂度整体移除：on_load / on_config_update（含 model scope）
     都不调用 get_available_models；不再订阅 model reload 广播。"""
-    from codex_reset_watcher.plugin import CodexResetWatcher
+    from plugin import CodexResetWatcher
 
     assert CodexResetWatcher.config_reload_subscriptions == ()
     assert not hasattr(CodexResetWatcher, "_validate_llm_task_on_load")

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from codex_reset_watcher.plugin import (
+from plugin import (
     classify_declared_signal,
     is_duplicate_live_confirmation,
     is_observed_declaration,
