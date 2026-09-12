@@ -34,7 +34,7 @@
   <img src="docs/images/qq-notification-full-translation.png" width="560" alt="长公告通知示例：中文翻译、Tibo 原文与原帖链接">
 </p>
 
-**短确认同样会第一时间提醒：**
+**短确认也会直接发送到群里：**
 
 <p align="center">
   <img src="docs/images/qq-notification-reset-confirmed.png" width="430" alt="重置确认通知示例：中文翻译、原文与原帖链接">
