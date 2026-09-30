@@ -3204,6 +3204,7 @@ def test_state_lock_concurrent_receipts_no_loss(tmp_path):
         await asyncio.sleep(0.05)  # 两个 task 都进入 slow_send 等待窗口
         gate.set()
         await asyncio.gather(task_a, task_b)
+        await _drain_inflight(plugin)
 
     asyncio.run(asyncio.wait_for(scenario(), 5))
     assert lock_reentrant_detected["flag"] is False  # 发送期间未持锁
@@ -4512,7 +4513,7 @@ def test_push_banked_golden_end_to_end_full_pipeline(tmp_path):
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
 
     async def run_and_drain():
-        await plugin._process_push_banked(_golden_push(), ["100000001"])  # noqa: SLF001
+        await plugin._process_push_banked(_golden_push(), ["100000001"], _golden_feed())  # noqa: SLF001
         await _drain_inflight(plugin)
 
     asyncio.run(run_and_drain())
@@ -4534,7 +4535,7 @@ def test_push_banked_golden_end_to_end_full_pipeline(tmp_path):
     assert _gstate(plugin)["push_banked_keys"] == ["push-banked:2097752790177370535"]
 
 
-def test_push_banked_minimal_object_sends_title_and_permalink(tmp_path):
+def test_push_banked_minimal_object_sends_title_and_source_page(tmp_path):
     """契约极简形态（无 title/body/at/url）：仍必须通知（展示字段不否决）；
     providers/feed 全缺 → 仅标题+原帖；LLM 不被调用（无正文不翻译）。"""
     plugin = _llm_plugin(tmp_path, llm_overrides={"enabled": False})
@@ -4552,7 +4553,7 @@ def test_push_banked_minimal_object_sends_title_and_permalink(tmp_path):
         (
             "qq-group-100000001",
             BANKED_NOTICE_TITLE
-            + "\n\n原帖：https://x.com/thsottiaux/status/2097752790177370535",
+            + "\n\n来源：https://codex-reset.com/banked-reset",
         )
     ]
     assert plugin._ctx.llm.generate_calls == []
