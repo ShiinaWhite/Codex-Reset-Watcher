@@ -555,7 +555,10 @@ def _tweet_source_id(url: Any) -> str:
     try:
         parsed = urlparse(url)
         valid = parsed.scheme in {"http", "https"} and parsed.hostname in {
-            "x.com", "www.x.com", "twitter.com", "www.twitter.com",
+            "x.com",
+            "www.x.com",
+            "twitter.com",
+            "www.twitter.com",
         }
     except ValueError:
         return ""
@@ -571,8 +574,14 @@ def _feed_item(feed: Any, collection: str, event_id: str) -> dict[str, Any]:
     items = feed.get(collection)
     if not isinstance(items, list):
         return {}
-    return next((item for item in items if isinstance(item, dict)
-                 and str(item.get("id") or "") == event_id), {})
+    return next(
+        (
+            item
+            for item in items
+            if isinstance(item, dict) and str(item.get("id") or "") == event_id
+        ),
+        {},
+    )
 
 
 def _banked_notice_identity(alert: dict[str, Any], event_id: str, feed: Any) -> str:
@@ -582,13 +591,19 @@ def _banked_notice_identity(alert: dict[str, Any], event_id: str, feed: Any) -> 
     # A monitoring observation has an explicit available phase and occurrence
     # time. Bind the same observation across surfaces only with both matches.
     # An old Tweet push cannot borrow a later mutable feed lifecycle phase.
-    if (not phase and event.get("source") == "observed"
-            and event.get("banked_state") == "available"
-            and _parse_iso(alert.get("at")) is not None
-            and _parse_iso(alert.get("at")) == _parse_iso(event.get("announced_at"))):
+    if (
+        not phase
+        and event.get("source") == "observed"
+        and event.get("banked_state") == "available"
+        and _parse_iso(alert.get("at")) is not None
+        and _parse_iso(alert.get("at")) == _parse_iso(event.get("announced_at"))
+    ):
         phase = "available"
-    return (f"banked:{event_id}:{phase}"
-            if isinstance(phase, str) and phase in NOTIFY_BANKED_STATES else "")
+    return (
+        f"banked:{event_id}:{phase}"
+        if isinstance(phase, str) and phase in NOTIFY_BANKED_STATES
+        else ""
+    )
 
 
 def _utcnow() -> datetime:
@@ -723,9 +738,7 @@ def _carry_validated_state(legacy: Any) -> dict[str, Any]:
     if not isinstance(legacy, dict):
         return carried
     keys = legacy.get("notified_keys")
-    keys_valid = isinstance(keys, list) and all(
-        isinstance(k, str) for k in keys
-    )
+    keys_valid = isinstance(keys, list) and all(isinstance(k, str) for k in keys)
     if legacy.get("feed_baseline_done") is True and keys_valid:
         # feed 车道：baseline 标志与 keys 成对携带（缺一即重新 baseline）。
         carried["feed_baseline_done"] = True
@@ -835,7 +848,11 @@ def build_confirmed_message(
 
 
 def build_estimated_message(
-    beijing: datetime, now: datetime, reason: str, source_text: Any = None, source_url: Any = None
+    beijing: datetime,
+    now: datetime,
+    reason: str,
+    source_text: Any = None,
+    source_url: Any = None,
 ) -> str:
     lines = [
         f"Codex 额度重置预告｜北京时间 {_format_title(beijing)}",
@@ -992,8 +1009,7 @@ def is_observed_declaration(
         str(observation_result or "").strip() == "reset_observed"
         or str(source or "").strip() == "operator-observed"
         or (
-            bool(str(observed_at or "").strip())
-            and _parse_iso(observed_at) is not None
+            bool(str(observed_at or "").strip()) and _parse_iso(observed_at) is not None
         )
     )
 
@@ -1018,10 +1034,11 @@ def is_duplicate_live_confirmation(
     """
     if not l4_already:
         return False
-    if (str(source or "").strip() != "live"
-            or explicit_reset_claim is not True):
+    if str(source or "").strip() != "live" or explicit_reset_claim is not True:
         return False
-    announced = announced_at if isinstance(announced_at, datetime) else _parse_iso(announced_at)
+    announced = (
+        announced_at if isinstance(announced_at, datetime) else _parse_iso(announced_at)
+    )
     posted = tweet_at if isinstance(tweet_at, datetime) else _parse_iso(tweet_at)
     return not (announced is None or posted is None or announced != posted)
 
@@ -1098,9 +1115,13 @@ def signals_from_feed(payload: Any, *, baseline: bool = False) -> list[FeedSigna
             continue
         url = str(event.get("url") or "").strip()
         if not _is_real_source(url):
-            url = (f"https://x.com/thsottiaux/status/{event_id}" if tweets.get(event_id)
-                   else "https://codex-reset.com/banked-reset" if event.get("reset_kind") == "banked"
-                   else "https://codex-reset.com/timeline")
+            url = (
+                f"https://x.com/thsottiaux/status/{event_id}"
+                if tweets.get(event_id)
+                else "https://codex-reset.com/banked-reset"
+                if event.get("reset_kind") == "banked"
+                else "https://codex-reset.com/timeline"
+            )
         reason = _reason_from_tags(event.get("reason_tags"))
         summary = str(event.get("summary") or "").strip()
         tweet = tweets.get(event_id)
@@ -1123,9 +1144,7 @@ def signals_from_feed(payload: Any, *, baseline: bool = False) -> list[FeedSigna
                         raw_text=raw_text,
                         # v0.1.10：结构化 join 发帖时刻，作为 LLM 翻译的
                         # published_at（相对时间解释基准），与 declared 车道一致。
-                        tweet_at=(
-                            str((tweet or {}).get("at") or "").strip() or None
-                        ),
+                        tweet_at=(str((tweet or {}).get("at") or "").strip() or None),
                     )
                 )
         if (
@@ -1152,9 +1171,11 @@ def signals_from_feed(payload: Any, *, baseline: bool = False) -> list[FeedSigna
                     for value in (event.get("is_reply"), (tweet or {}).get("is_reply"))
                     if value is not None
                 ]
-                notifiable = not event.get("preview") and not any(
-                    f is True for f in reply_flags
-                ) and any(f is False for f in reply_flags)
+                notifiable = (
+                    not event.get("preview")
+                    and not any(f is True for f in reply_flags)
+                    and any(f is False for f in reply_flags)
+                )
             if notifiable:
                 signals.append(
                     FeedSignal(
@@ -1174,12 +1195,12 @@ def signals_from_feed(payload: Any, *, baseline: bool = False) -> list[FeedSigna
                         observed_at=(
                             str(event.get("observed_at") or "").strip() or None
                         ),
-                        tweet_at=(
-                            str((tweet or {}).get("at") or "").strip() or None
-                        ),
+                        tweet_at=(str((tweet or {}).get("at") or "").strip() or None),
                         explicit_reset_claim=(
                             tweet.get("explicit_reset_claim")
-                            if isinstance((tweet or {}).get("explicit_reset_claim"), bool)
+                            if isinstance(
+                                (tweet or {}).get("explicit_reset_claim"), bool
+                            )
                             else None
                         ),
                     )
@@ -1519,7 +1540,9 @@ class CodexResetWatcher(MaiBotPlugin):
             if self._inflight[key]["task"] in tasks:
                 del self._inflight[key]
 
-    async def on_config_update(self, scope: str, config_data: dict, version: str) -> None:
+    async def on_config_update(
+        self, scope: str, config_data: dict, version: str
+    ) -> None:
         if scope != "self":
             return
         # 顺序即正确性（v0.1.8 blocker 修正）：先关生产者（watcher），
@@ -1547,7 +1570,11 @@ class CodexResetWatcher(MaiBotPlugin):
         watcher = normalized.get("watcher")
         if isinstance(watcher, dict):
             raw_ids = watcher.get("group_ids")
-            ids = [str(item).strip() for item in raw_ids] if isinstance(raw_ids, list) else []
+            ids = (
+                [str(item).strip() for item in raw_ids]
+                if isinstance(raw_ids, list)
+                else []
+            )
             deduped: list[str] = []
             for gid in ids:
                 if gid and gid not in deduped:
@@ -1759,7 +1786,9 @@ class CodexResetWatcher(MaiBotPlugin):
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url) as resp:
                     if resp.status != 200:
-                        logger.warning("结论 API 请求失败: %s HTTP %s", url, resp.status)
+                        logger.warning(
+                            "结论 API 请求失败: %s HTTP %s", url, resp.status
+                        )
                         return None
                     payload = await resp.json()
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
@@ -1770,7 +1799,9 @@ class CodexResetWatcher(MaiBotPlugin):
             return None
         return payload if isinstance(payload, dict) else None
 
-    async def _fetch_conclusion(self, feed: dict[str, Any] | None = None) -> Conclusion | None:
+    async def _fetch_conclusion(
+        self, feed: dict[str, Any] | None = None
+    ) -> Conclusion | None:
         """获取 Tibo 准确时间结论（Global 精确时间辅助源）。
 
         feed 主源由 _check_once 先行处理并传入；未传入（直接调用或测试
@@ -1786,7 +1817,9 @@ class CodexResetWatcher(MaiBotPlugin):
             return None
         if feed is None:
             feed = await self._get_json(f"{codex_base}/api/feed", FEED_TIMEOUT_SECONDS)
-        tibo = await self._get_json(f"{tibo_base}/api/reset/current", TIBO_TIMEOUT_SECONDS)
+        tibo = await self._get_json(
+            f"{tibo_base}/api/reset/current", TIBO_TIMEOUT_SECONDS
+        )
         if not tibo:
             return None
         if str(tibo.get("status") or "") in TERMINAL_STATUSES:
@@ -1846,7 +1879,10 @@ class CodexResetWatcher(MaiBotPlugin):
         return "未说明"
 
     async def _process_feed_signals(
-        self, feed: Any, groups: list[str], beijing: ZoneInfo,
+        self,
+        feed: Any,
+        groups: list[str],
+        beijing: ZoneInfo,
         forecast: Any = None,
     ) -> None:
         """feed 主源车道：每群独立 baseline 与去重（per-group receipt）。
@@ -1948,7 +1984,9 @@ class CodexResetWatcher(MaiBotPlugin):
         )
         if not age_ok:
             logger.info(
-                "Feed 信号超过 %d 小时，跳过并记录：%s", MAX_SIGNAL_AGE_HOURS, signal.key
+                "Feed 信号超过 %d 小时，跳过并记录：%s",
+                MAX_SIGNAL_AGE_HOURS,
+                signal.key,
             )
             for group_id in new_for:
                 await self._record_declared_key(group_id, signal.key)
@@ -1985,28 +2023,38 @@ class CodexResetWatcher(MaiBotPlugin):
         banked_key = f"banked-primary:{signal.key}"
         try:
             identity = signal.key
-            remaining = [gid for gid in groups if not self._notice_delivered(gid, identity)]
+            remaining = [
+                gid for gid in groups if not self._notice_delivered(gid, identity)
+            ]
             if not remaining:
                 for gid in groups:
-                    await self._deliver_notice(gid, "notified_keys", signal.key, identity, "")
-                if all(signal.key in set(self._group_state(gid).get("notified_keys") or [])
-                       for gid in groups if gid in self._target_groups()):
+                    await self._deliver_notice(
+                        gid, "notified_keys", signal.key, identity, ""
+                    )
+                if all(
+                    signal.key in set(self._group_state(gid).get("notified_keys") or [])
+                    for gid in groups
+                    if gid in self._target_groups()
+                ):
                     return
-            content, url, upstream = await self._event_notice_content(signal.event_id, {}, feed)
-            published_at = (
-                signal.tweet_at
-                or (
-                    signal.announced_at.isoformat()
-                    if signal.announced_at is not None
-                    else "unknown"
-                )
+            content, url, upstream = await self._event_notice_content(
+                signal.event_id, {}, feed
+            )
+            published_at = signal.tweet_at or (
+                signal.announced_at.isoformat()
+                if signal.announced_at is not None
+                else "unknown"
             )
             translation = await self._llm_translate_content(
                 "" if upstream else signal.event_id, url, published_at, content
             )
-            message = self._event_notice_message(BANKED_NOTICE_TITLE, url, content, translation, upstream)
+            message = self._event_notice_message(
+                BANKED_NOTICE_TITLE, url, content, translation, upstream
+            )
             for group_id in groups:
-                await self._deliver_notice(group_id, "notified_keys", signal.key, identity, message)
+                await self._deliver_notice(
+                    group_id, "notified_keys", signal.key, identity, message
+                )
         except Exception:
             logger.exception("Banked 通知管线异常：%s", banked_key)
         finally:
@@ -2043,9 +2091,7 @@ class CodexResetWatcher(MaiBotPlugin):
                 for group_id in groups:
                     entry = self._group_state(group_id)
                     seen_keys = set(entry.get("upstream_alert_keys") or [])
-                    seen_tweets = set(
-                        entry.get("upstream_alert_tweet_ids") or []
-                    )
+                    seen_tweets = set(entry.get("upstream_alert_tweet_ids") or [])
                     if key in seen_keys and osig_tweet_id not in seen_tweets:
                         entry["upstream_alert_tweet_ids"] = sorted(
                             seen_tweets | {osig_tweet_id}
@@ -2064,9 +2110,7 @@ class CodexResetWatcher(MaiBotPlugin):
             return
         self._inflight[key] = {
             "task": asyncio.create_task(
-                self._alert_pipeline(
-                    key, osig, osig_tweet_id, feed, pending
-                ),
+                self._alert_pipeline(key, osig, osig_tweet_id, feed, pending),
                 name=f"codex-alert-{alert_event_id}",
             ),
             "kind": "l4",
@@ -2075,8 +2119,12 @@ class CodexResetWatcher(MaiBotPlugin):
         }
 
     async def _alert_pipeline(
-        self, key: str, osig: dict[str, Any], osig_tweet_id: str,
-        feed: Any, pending: list[str]
+        self,
+        key: str,
+        osig: dict[str, Any],
+        osig_tweet_id: str,
+        feed: Any,
+        pending: list[str],
     ) -> None:
         """单条 upstream alert 的后台处理管线（v0.1.8，v0.1.10 统一文案）。
 
@@ -2087,16 +2135,29 @@ class CodexResetWatcher(MaiBotPlugin):
         """
         try:
             identity = f"global:{osig_tweet_id}" if osig_tweet_id else ""
-            if identity and all(
-                self._notice_delivered(gid, identity)
-                and not self._group_l4_alerted(gid, osig_tweet_id)
-                for gid in pending
-            ) and key == f"{UPSTREAM_ALERT_KEY_PREFIX}signal:{osig_tweet_id}:likely":
+            if (
+                identity
+                and all(
+                    self._notice_delivered(gid, identity)
+                    and not self._group_l4_alerted(gid, osig_tweet_id)
+                    for gid in pending
+                )
+                and key == f"{UPSTREAM_ALERT_KEY_PREFIX}signal:{osig_tweet_id}:likely"
+            ):
                 for gid in pending:
-                    await self._deliver_notice(gid, "upstream_alert_keys", key, identity,
-                                               "", l4_tweet_id=osig_tweet_id)
-                if all(key in set(self._group_state(gid).get("upstream_alert_keys") or [])
-                       for gid in pending if gid in self._target_groups()):
+                    await self._deliver_notice(
+                        gid,
+                        "upstream_alert_keys",
+                        key,
+                        identity,
+                        "",
+                        l4_tweet_id=osig_tweet_id,
+                    )
+                if all(
+                    key in set(self._group_state(gid).get("upstream_alert_keys") or [])
+                    for gid in pending
+                    if gid in self._target_groups()
+                ):
                     return
             content = await self._enrich_tweet_content({"official_signal": osig}, feed)
             translation = await self._llm_translate_content(
@@ -2114,9 +2175,12 @@ class CodexResetWatcher(MaiBotPlugin):
             )
             for group_id in pending:
                 await self._deliver_notice(
-                    group_id, "upstream_alert_keys", key,
+                    group_id,
+                    "upstream_alert_keys",
+                    key,
                     f"global:{osig_tweet_id}" if osig_tweet_id else "",
-                    message, l4_tweet_id=osig_tweet_id,
+                    message,
+                    l4_tweet_id=osig_tweet_id,
                 )
         except Exception:
             logger.exception("Upstream 告警处理管线异常：%s", key)
@@ -2137,10 +2201,7 @@ class CodexResetWatcher(MaiBotPlugin):
             return at
         if tweet_id and isinstance(feed, dict):
             for tweet in feed.get("tweets") or []:
-                if (
-                    isinstance(tweet, dict)
-                    and str(tweet.get("id") or "") == tweet_id
-                ):
+                if isinstance(tweet, dict) and str(tweet.get("id") or "") == tweet_id:
                     candidate = str(tweet.get("at") or "").strip()
                     if candidate:
                         return candidate
@@ -2204,20 +2265,35 @@ class CodexResetWatcher(MaiBotPlugin):
         key = f"{PUSH_BANKED_KEY_PREFIX}{alert_id}"
         try:
             identity = _banked_notice_identity(alert, alert_id, feed)
-            if identity and all(self._notice_delivered(gid, identity) for gid in pending):
+            if identity and all(
+                self._notice_delivered(gid, identity) for gid in pending
+            ):
                 for gid in pending:
-                    await self._deliver_notice(gid, "push_banked_keys", key, identity, "")
-                if all(key in set(self._group_state(gid).get("push_banked_keys") or [])
-                       for gid in pending if gid in self._target_groups()):
+                    await self._deliver_notice(
+                        gid, "push_banked_keys", key, identity, ""
+                    )
+                if all(
+                    key in set(self._group_state(gid).get("push_banked_keys") or [])
+                    for gid in pending
+                    if gid in self._target_groups()
+                ):
                     return
-            content, url, upstream = await self._event_notice_content(alert_id, alert, feed)
-            translation = await self._llm_translate_content(
-                "" if upstream else alert_id, url,
-                self._l4_published_at(alert, alert_id, feed), content,
+            content, url, upstream = await self._event_notice_content(
+                alert_id, alert, feed
             )
-            message = self._event_notice_message(BANKED_NOTICE_TITLE, url, content, translation, upstream)
+            translation = await self._llm_translate_content(
+                "" if upstream else alert_id,
+                url,
+                self._l4_published_at(alert, alert_id, feed),
+                content,
+            )
+            message = self._event_notice_message(
+                BANKED_NOTICE_TITLE, url, content, translation, upstream
+            )
             for group_id in pending:
-                await self._deliver_notice(group_id, "push_banked_keys", key, identity, message)
+                await self._deliver_notice(
+                    group_id, "push_banked_keys", key, identity, message
+                )
         except Exception:
             logger.exception("Push Banked 镜像管线异常：%s", key)
         finally:
@@ -2251,8 +2327,9 @@ class CodexResetWatcher(MaiBotPlugin):
         if content is None or not content.text.strip():
             return None
         completeness_note = (
-            "" if content.completeness == "full" else
-            "（content_completeness 不是 full：以上可能只是部分原文）"
+            ""
+            if content.completeness == "full"
+            else "（content_completeness 不是 full：以上可能只是部分原文）"
         )
         # 信息边界（v0.1.8 blocker 修正）：content_source 等内部 Provider
         # taxonomy 不进 LLM 输入——模型可能将其复述进用户可见字段。
@@ -2270,7 +2347,11 @@ class CodexResetWatcher(MaiBotPlugin):
         )
         base_user_prompt = (
             f"翻译要求：\n{cfg.prompt}\n\n"
-            + ("正文来源：上游监测通知，不是 Tibo 推文。\n" if content.source == "upstream" else "")
+            + (
+                "正文来源：上游监测通知，不是 Tibo 推文。\n"
+                if content.source == "upstream"
+                else ""
+            )
             + f"元数据：\n{metadata}\n\n"
             f"<SOURCE_TEXT>\n{content.text}\n</SOURCE_TEXT>"
         )
@@ -2305,7 +2386,11 @@ class CodexResetWatcher(MaiBotPlugin):
                 logger.exception("LLM 翻译：调用异常，跳过翻译")
                 return None
             if not isinstance(result, dict) or not result.get("success"):
-                error_text = str(result.get("error")) if isinstance(result, dict) else type(result).__name__
+                error_text = (
+                    str(result.get("error"))
+                    if isinstance(result, dict)
+                    else type(result).__name__
+                )
                 logger.info("LLM 翻译：Host 返回失败（%s），跳过翻译", error_text)
                 return None
             raw = str(result.get("response") or "")
@@ -2327,7 +2412,9 @@ class CodexResetWatcher(MaiBotPlugin):
                     return translation
                 validation_error = "translation_zh 缺失、为空或类型不符合契约"
             if attempt == 2:
-                logger.info("LLM 翻译：%s，修复重试后仍失败，跳过翻译", validation_error)
+                logger.info(
+                    "LLM 翻译：%s，修复重试后仍失败，跳过翻译", validation_error
+                )
                 return None
             logger.info("LLM 翻译：%s，用剩余预算修复重试一次", validation_error)
             messages = [
@@ -2424,10 +2511,7 @@ class CodexResetWatcher(MaiBotPlugin):
         # 而非机械取先到者。
         if tweet_id and isinstance(feed, dict):
             for tweet in feed.get("tweets") or []:
-                if (
-                    isinstance(tweet, dict)
-                    and str(tweet.get("id") or "") == tweet_id
-                ):
+                if isinstance(tweet, dict) and str(tweet.get("id") or "") == tweet_id:
                     text = str(tweet.get("text") or "").strip()
                     if text:
                         best = _better_content(
@@ -2475,8 +2559,15 @@ class CodexResetWatcher(MaiBotPlugin):
         )
 
     async def _deliver_notice(
-        self, group_id: str, field: str, key: str, identity: str,
-        message: str, *, l4_tweet_id: str = "", confirmation: str | None = None,
+        self,
+        group_id: str,
+        field: str,
+        key: str,
+        identity: str,
+        message: str,
+        *,
+        l4_tweet_id: str = "",
+        confirmation: str | None = None,
     ) -> bool:
         """Single delivery gate shared by all four notice pipelines.
 
@@ -2495,10 +2586,13 @@ class CodexResetWatcher(MaiBotPlugin):
                 return False
             covered = self._notice_delivered(group_id, identity)
             # Do not swallow likely -> strong or other upstream ID revisions.
-            revision = bool(l4_tweet_id and (
-                self._group_l4_alerted(group_id, l4_tweet_id)
-                or key != f"{UPSTREAM_ALERT_KEY_PREFIX}signal:{l4_tweet_id}:likely"
-            ))
+            revision = bool(
+                l4_tweet_id
+                and (
+                    self._group_l4_alerted(group_id, l4_tweet_id)
+                    or key != f"{UPSTREAM_ALERT_KEY_PREFIX}signal:{l4_tweet_id}:likely"
+                )
+            )
             should_send = not covered or revision or confirmation is not None
             if should_send:
                 text = confirmation if covered and confirmation is not None else message
@@ -2525,13 +2619,20 @@ class CodexResetWatcher(MaiBotPlugin):
                         set(entry.get("upstream_alert_tweet_ids") or []) | {l4_tweet_id}
                     )
                 self._save_state()
-            logger.info("通知投递：群 %s key=%s identity=%s action=%s",
-                        group_id, key, identity or "unlinked",
-                        "sent" if should_send else "covered")
+            logger.info(
+                "通知投递：群 %s key=%s identity=%s action=%s",
+                group_id,
+                key,
+                identity or "unlinked",
+                "sent" if should_send else "covered",
+            )
             return should_send
 
     async def _event_notice_content(
-        self, event_id: str, source: dict[str, Any], feed: Any,
+        self,
+        event_id: str,
+        source: dict[str, Any],
+        feed: Any,
         source_page: str = "https://codex-reset.com/banked-reset",
     ) -> tuple[TweetContent | None, str, bool]:
         """Resolve provenance before asking Tweet providers or labelling text.
@@ -2542,9 +2643,14 @@ class CodexResetWatcher(MaiBotPlugin):
         """
         tweet = _feed_item(feed, "tweets", event_id)
         event = _feed_item(feed, "events", event_id)
-        url = next((value.strip() for value in (
-            source.get("url"), event.get("url"), tweet.get("url")
-        ) if _is_real_source(value)), "")
+        url = next(
+            (
+                value.strip()
+                for value in (source.get("url"), event.get("url"), tweet.get("url"))
+                if _is_real_source(value)
+            ),
+            "",
+        )
         tweet_id = _tweet_source_id(url)
         if tweet:
             tweet_id = event_id
@@ -2557,22 +2663,36 @@ class CodexResetWatcher(MaiBotPlugin):
         # feed text/summary as source content for explicit observed events.
         text = source.get("body")
         if not isinstance(text, str) or not text.strip():
-            text = (event.get("text") or event.get("summary")
-                    if event.get("source") == "observed" else None)
-        content = (TweetContent(text.strip(), "upstream", "unknown")
-                   if isinstance(text, str) and text.strip() else None)
+            text = (
+                event.get("text") or event.get("summary")
+                if event.get("source") == "observed"
+                else None
+            )
+        content = (
+            TweetContent(text.strip(), "upstream", "unknown")
+            if isinstance(text, str) and text.strip()
+            else None
+        )
         if not _is_real_source(url):
             url = source_page
         return content, url, True
 
     @staticmethod
     def _event_notice_message(
-        title: str, url: str, content: TweetContent | None,
-        translation: str | None, upstream: bool,
+        title: str,
+        url: str,
+        content: TweetContent | None,
+        translation: str | None,
+        upstream: bool,
     ) -> str:
         if not upstream:
-            return build_full_notice(title, url, content.text if content else None,
-                                     content.completeness if content else None, translation)
+            return build_full_notice(
+                title,
+                url,
+                content.text if content else None,
+                content.completeness if content else None,
+                translation,
+            )
         lines = [title]
         if translation:
             lines.extend(["", "中文翻译：", translation])
@@ -2591,8 +2711,12 @@ class CodexResetWatcher(MaiBotPlugin):
             self._save_state()
 
     async def _dispatch_declared_signal(
-        self, signal: FeedSignal, new_for: list[str], feed: Any,
-        beijing: ZoneInfo, osig_tweet_id: str = "",
+        self,
+        signal: FeedSignal,
+        new_for: list[str],
+        feed: Any,
+        beijing: ZoneInfo,
+        osig_tweet_id: str = "",
     ) -> None:
         """v0.1.9 Confirmation Lane：declared 信号的 per-group 三级决策。
 
@@ -2615,7 +2739,9 @@ class CodexResetWatcher(MaiBotPlugin):
         inflight 后台执行，poller 不阻塞；同 key 未完成不重复启动。
         """
         observed = is_observed_declaration(
-            signal.observation_result, signal.source, signal.observed_at,
+            signal.observation_result,
+            signal.source,
+            signal.observed_at,
         )
         now = _utcnow()
         age_ok = signal.announced_at is not None and (
@@ -2627,7 +2753,9 @@ class CodexResetWatcher(MaiBotPlugin):
         deferred: list[str] = []
         for group_id in new_for:
             l4_already = self._group_l4_alerted(group_id, signal.event_id)
-            if l4_already or self._notice_delivered(group_id, f"global:{signal.event_id}"):
+            if l4_already or self._notice_delivered(
+                group_id, f"global:{signal.event_id}"
+            ):
                 duplicate = True  # structured successful same-event receipt
                 decision = classify_declared_signal(
                     observed=observed,
@@ -2635,9 +2763,8 @@ class CodexResetWatcher(MaiBotPlugin):
                     duplicate_confirmation=duplicate,
                 )
             elif (
-                (osig_tweet_id and osig_tweet_id == signal.event_id)
-                or self._l4_inflight_same_tweet(signal.event_id, group_id)
-            ):
+                osig_tweet_id and osig_tweet_id == signal.event_id
+            ) or self._l4_inflight_same_tweet(signal.event_id, group_id):
                 deferred.append(group_id)
                 continue
             else:
@@ -2656,7 +2783,8 @@ class CodexResetWatcher(MaiBotPlugin):
             )
         if c_groups:
             logger.info(
-                "L1 确认事件已被 L4 覆盖（同 tweet），静默并记录：%s", signal.key,
+                "L1 确认事件已被 L4 覆盖（同 tweet），静默并记录：%s",
+                signal.key,
             )
             for group_id in c_groups:
                 await self._record_declared_key(group_id, signal.key)
@@ -2673,8 +2801,12 @@ class CodexResetWatcher(MaiBotPlugin):
             message = build_confirm_effective_message(signal.observed_at)
             for group_id in b_groups:
                 await self._deliver_notice(
-                    group_id, "notified_keys", signal.key, f"global:{signal.event_id}",
-                    message, confirmation=message,
+                    group_id,
+                    "notified_keys",
+                    signal.key,
+                    f"global:{signal.event_id}",
+                    message,
+                    confirmation=message,
                 )
         if a_groups:
             l1_key = f"l1-primary:{signal.key}"
@@ -2718,10 +2850,15 @@ class CodexResetWatcher(MaiBotPlugin):
         l1_key = f"l1-primary:{signal.key}"
         try:
             observed = is_observed_declaration(
-                signal.observation_result, signal.source, signal.observed_at,
+                signal.observation_result,
+                signal.source,
+                signal.observed_at,
             )
             content, url, upstream = await self._event_notice_content(
-                signal.event_id, {"url": signal.url}, feed, "https://codex-reset.com/timeline",
+                signal.event_id,
+                {"url": signal.url},
+                feed,
+                "https://codex-reset.com/timeline",
             )
             translation = await self._llm_translate_content(
                 "" if upstream else signal.event_id,
@@ -2731,13 +2868,21 @@ class CodexResetWatcher(MaiBotPlugin):
             )
             message = self._event_notice_message(
                 GLOBAL_CONFIRMED_TITLE if observed else GLOBAL_NOTICE_TITLE,
-                url, content, translation, upstream,
+                url,
+                content,
+                translation,
+                upstream,
             )
             for group_id in groups:
                 await self._deliver_notice(
-                    group_id, "notified_keys", signal.key, f"global:{signal.event_id}",
+                    group_id,
+                    "notified_keys",
+                    signal.key,
+                    f"global:{signal.event_id}",
                     message,
-                    confirmation=build_confirm_effective_message(signal.observed_at) if observed else None,
+                    confirmation=build_confirm_effective_message(signal.observed_at)
+                    if observed
+                    else None,
                 )
         except Exception:
             logger.exception("L1 primary 管线异常：%s", l1_key)
@@ -2751,7 +2896,10 @@ class CodexResetWatcher(MaiBotPlugin):
         changed = False
         if isinstance(groups, dict):
             for entry in groups.values():
-                if isinstance(entry, dict) and entry.pop("active_plan", None) is not None:
+                if (
+                    isinstance(entry, dict)
+                    and entry.pop("active_plan", None) is not None
+                ):
                     changed = True
         if changed:
             self._save_state()
@@ -2787,14 +2935,19 @@ class CodexResetWatcher(MaiBotPlugin):
             if last_reset == conclusion.reset_at and not upgraded_from_estimate:
                 continue
             active = entry.get("active_plan")
-            active_reset = _parse_iso(active.get("reset_at")) if isinstance(active, dict) else None
+            active_reset = (
+                _parse_iso(active.get("reset_at")) if isinstance(active, dict) else None
+            )
             can_link_cycles = _is_real_source(conclusion.source_url) and (
                 isinstance(active, dict) and _is_real_source(active.get("source_url"))
             )
             if conclusion.approximate:
                 message = build_estimated_message(
-                    reset_beijing, now, conclusion.reason,
-                    conclusion.raw_text, conclusion.source_url,
+                    reset_beijing,
+                    now,
+                    conclusion.reason,
+                    conclusion.raw_text,
+                    conclusion.source_url,
                 )
             elif (
                 conclusion.kind == "time_changed"
@@ -2803,13 +2956,20 @@ class CodexResetWatcher(MaiBotPlugin):
                 and active_reset != conclusion.reset_at
             ):
                 message = build_updated_message(
-                    active_reset.astimezone(beijing), reset_beijing, now, conclusion.reason,
-                    conclusion.raw_text, conclusion.source_url,
+                    active_reset.astimezone(beijing),
+                    reset_beijing,
+                    now,
+                    conclusion.reason,
+                    conclusion.raw_text,
+                    conclusion.source_url,
                 )
             else:
                 message = build_confirmed_message(
-                    reset_beijing, now, conclusion.reason,
-                    conclusion.raw_text, conclusion.source_url,
+                    reset_beijing,
+                    now,
+                    conclusion.reason,
+                    conclusion.raw_text,
+                    conclusion.source_url,
                 )
             if await self._send_group_text(group_id, message):
                 # 先收集，send 循环结束后统一加锁落盘（锁内无网络等待）。
@@ -2953,7 +3113,9 @@ class CodexResetWatcher(MaiBotPlugin):
         }
         try:
             tmp = path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
             tmp.replace(path)
         except OSError:
             logger.exception("写入重置状态文件失败")

@@ -158,7 +158,9 @@ def _probe(name: str) -> dict:
     return json.loads((PROBE_DIR / name).read_text(encoding="utf-8"))
 
 
-def _wire_fetch(plugin: CodexResetWatcher, current: dict, events: dict | None, feed: dict | None):
+def _wire_fetch(
+    plugin: CodexResetWatcher, current: dict, events: dict | None, feed: dict | None
+):
     async def fake_get_json(url: str, timeout_seconds: int):
         if "/api/reset/current" in url:
             return current
@@ -180,7 +182,11 @@ def _wired_conclusion(plugin: CodexResetWatcher, current, events, feed):
     return asyncio.run(scenario())
 
 
-def _tibo_payload(status: str, expected_reset_at, source_url: str = "https://x.com/thsottiaux/status/999") -> dict:
+def _tibo_payload(
+    status: str,
+    expected_reset_at,
+    source_url: str = "https://x.com/thsottiaux/status/999",
+) -> dict:
     """真实 /api/reset/current schema 形状（字段与 probe/live 一致）。"""
     return {
         "status": status,
@@ -193,7 +199,9 @@ def _tibo_payload(status: str, expected_reset_at, source_url: str = "https://x.c
     }
 
 
-def _stage_payload(plugin: CodexResetWatcher, payload: dict, events: dict | None = None):
+def _stage_payload(
+    plugin: CodexResetWatcher, payload: dict, events: dict | None = None
+):
     """经 _get_json 桩 + _check_once 走完整生产路径（含去重/通知/状态写盘）。"""
     current = payload
 
@@ -203,7 +211,11 @@ def _stage_payload(plugin: CodexResetWatcher, payload: dict, events: dict | None
         if "api/events" in url:
             if events is not None:
                 return events
-            return {"data": [{"confidence": 0.95, "source_url": current.get("resetSourceUrl")}]}
+            return {
+                "data": [
+                    {"confidence": 0.95, "source_url": current.get("resetSourceUrl")}
+                ]
+            }
         if "api/feed" in url:
             return None
         return None
@@ -235,9 +247,12 @@ def test_full_lifecycle_through_production_path(tmp_path):
         "resetSource": "thsottiaux",
         "resetSourceUrl": url,
         "verificationStatus": "DIRECT_VERIFIED",
-        "confirmation": {"type": "DIRECT", "confidence": 0.95,
-                         "confirmedAt": t_changed.isoformat(),
-                         "sourceUrl": url},
+        "confirmation": {
+            "type": "DIRECT",
+            "confidence": 0.95,
+            "confirmedAt": t_changed.isoformat(),
+            "sourceUrl": url,
+        },
     }
     _stage_payload(plugin, confirmed)
     assert plugin._ctx.send.sent_messages == []
@@ -453,10 +468,17 @@ class _FakeLLM:
             return result()
         return result
 
-    async def generate(self, prompt, model="", temperature=None, max_tokens=None, **kwargs):
+    async def generate(
+        self, prompt, model="", temperature=None, max_tokens=None, **kwargs
+    ):
         self.generate_calls.append(
-            {"prompt": prompt, "model": model, "temperature": temperature,
-             "max_tokens": max_tokens, **kwargs}
+            {
+                "prompt": prompt,
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                **kwargs,
+            }
         )
         raise AssertionError("测试未设置 ctx.llm.generate 行为")
 
@@ -530,7 +552,9 @@ def _run(plugin: CodexResetWatcher, conclusion: Conclusion | None):
 
         plugin._get_json = none_fetch  # type: ignore[method-assign]
         await plugin._maybe_notify(  # noqa: SLF001
-            conclusion, plugin._target_groups(), plugin._target_zone()  # noqa: SLF001
+            conclusion,
+            plugin._target_groups(),
+            plugin._target_zone(),  # noqa: SLF001
         )
 
     asyncio.run(scenario())
@@ -814,9 +838,7 @@ def test_archived_reply_event_cannot_become_declared_notify():
     （真实 archive 事件即缺该字段），tweets[] 仍保留 is_reply=true →
     仍不得产出 Global declared 信号。只动结构化字段，不碰文本。"""
     feed = _probe("live/feed_0905.json")
-    fp_tweet = next(
-        t for t in feed["tweets"] if t.get("id") == "2096035748130795560"
-    )
+    fp_tweet = next(t for t in feed["tweets"] if t.get("id") == "2096035748130795560")
     assert fp_tweet["is_reply"] is True  # 前提：tweet 元数据保留回复标记
 
     archived_events = []
@@ -874,9 +896,7 @@ def test_signals_from_feed_joins_tweet_text():
         for s in signals_from_feed(feed)
         if s.key == "banked:2095651088502591861:announced"
     )
-    assert announced.raw_text.startswith(
-        "We will give one banked reset for every day"
-    )
+    assert announced.raw_text.startswith("We will give one banked reset for every day")
     assert announced.url == "https://x.com/thsottiaux/status/2095651088502591861"
 
 
@@ -1079,7 +1099,13 @@ def test_contract_prompt_banked_safety_is_translation_constraint():
     assert "不得总结、压缩、删减、省略或改写成摘要" in CONTRACT_PROMPT
     # translation-only 契约：唯一输出字段
     assert '{"translation_zh": string}' in CONTRACT_PROMPT
-    for retired in ("summary_zh", "time_expressions", "key_points", "ambiguities", "context_notes"):
+    for retired in (
+        "summary_zh",
+        "time_expressions",
+        "key_points",
+        "ambiguities",
+        "context_notes",
+    ):
         assert retired not in CONTRACT_PROMPT
 
 
@@ -1089,12 +1115,23 @@ def test_contract_prompt_timezone_and_boundary_rules():
     # 时区缩写：固定偏移明写；PT 按 published_at 日期判断
     assert "PST 即 UTC-8" in CONTRACT_PROMPT
     assert "PDT 即 UTC-7" in CONTRACT_PROMPT
-    assert "单独的 PT 则根据 published_at 的日期按太平洋时间判断标准时/夏令时" in CONTRACT_PROMPT
+    assert (
+        "单独的 PT 则根据 published_at 的日期按太平洋时间判断标准时/夏令时"
+        in CONTRACT_PROMPT
+    )
     # 不得把原文明写的 PST 擅自重解释为 PDT
-    assert "不得因为日期处于夏令时，就把原文明写的 PST 重新解释成 PDT" in CONTRACT_PROMPT
+    assert (
+        "不得因为日期处于夏令时，就把原文明写的 PST 重新解释成 PDT" in CONTRACT_PROMPT
+    )
     # 实现细节：不得额外添加进译文；原文本身明确提到则必须忠实翻译
-    assert "不得把插件元数据、Provider、API、数据来源等实现细节额外添加进译文" in CONTRACT_PROMPT
-    assert "如果 <SOURCE_TEXT> 原文本身明确提到这些词或概念，必须忠实翻译" in CONTRACT_PROMPT
+    assert (
+        "不得把插件元数据、Provider、API、数据来源等实现细节额外添加进译文"
+        in CONTRACT_PROMPT
+    )
+    assert (
+        "如果 <SOURCE_TEXT> 原文本身明确提到这些词或概念，必须忠实翻译"
+        in CONTRACT_PROMPT
+    )
     # 信息不足：仍正常翻译原表达，但不擅自补北京时间/时区/具体日期
     assert "时间或时区信息不足时，仍正常翻译原有时间表达" in CONTRACT_PROMPT
     assert "不要擅自补北京时间、时区或具体日期" in CONTRACT_PROMPT
@@ -1124,7 +1161,11 @@ def test_global_notice_full_structure_exact():
     """统一完整通知结构精确断言：标题 → 中文翻译 → Tibo 原文 → 原帖。"""
     url = "https://x.com/thsottiaux/status/1"
     body = build_full_notice(
-        GLOBAL_NOTICE_TITLE, url, "Lands around 6pm PST today.", "full", "预计今天北京时间 10:00 左右落地。"
+        GLOBAL_NOTICE_TITLE,
+        url,
+        "Lands around 6pm PST today.",
+        "full",
+        "预计今天北京时间 10:00 左右落地。",
     )
     assert body == (
         "Codex 额度重置提醒\n"
@@ -1159,14 +1200,16 @@ def test_global_notice_excerpt_label_honesty():
     """completeness=unknown → 诚实措辞「Tibo 原文摘录」，且不得同时出现
     「Tibo 原文：」；展示护栏裁剪同样降级为摘录。"""
     excerpt = build_full_notice(
-        GLOBAL_NOTICE_TITLE, "https://x.com/thsottiaux/status/3", "只有部分文本", "unknown", "译文"
+        GLOBAL_NOTICE_TITLE,
+        "https://x.com/thsottiaux/status/3",
+        "只有部分文本",
+        "unknown",
+        "译文",
     )
     assert "Tibo 原文摘录：\n只有部分文本" in excerpt
     assert "Tibo 原文：" not in excerpt
     long_text = "x" * 3000
-    truncated = build_full_notice(
-        GLOBAL_NOTICE_TITLE, None, long_text, "full", None
-    )
+    truncated = build_full_notice(GLOBAL_NOTICE_TITLE, None, long_text, "full", None)
     assert "Tibo 原文摘录：" in truncated
     assert ("x" * 1999 + "…") in truncated
 
@@ -1267,7 +1310,9 @@ def test_baseline_flag_survives_future_version_bump(tmp_path):
             "notified_keys": ["banked:1:announced"],
         },
     }
-    (tmp_path / "reset_state.json").write_text(json.dumps(future_state), encoding="utf-8")
+    (tmp_path / "reset_state.json").write_text(
+        json.dumps(future_state), encoding="utf-8"
+    )
     plugin = _make_plugin(tmp_path)
     assert _gstate(plugin) == {
         "feed_baseline_done": True,
@@ -1283,7 +1328,9 @@ def test_state_rollback_missing_keys_rebaselines_silently(tmp_path, monkeypatch)
         "version": 99,
         "state": {"feed_baseline_done": True},  # 去重表缺失
     }
-    (tmp_path / "reset_state.json").write_text(json.dumps(rollback_state), encoding="utf-8")
+    (tmp_path / "reset_state.json").write_text(
+        json.dumps(rollback_state), encoding="utf-8"
+    )
     plugin = _make_plugin(tmp_path)
     # 成对校验失败 → baseline 视为未完成（缺失即 False 语义）。
     assert not _gstate(plugin).get("feed_baseline_done")
@@ -1307,7 +1354,9 @@ def test_state_corrupt_keys_type_forces_rebaseline(tmp_path):
             "notified_keys": ["ok", 42],  # 42 非 str
         },
     }
-    (tmp_path / "reset_state.json").write_text(json.dumps(corrupt_state), encoding="utf-8")
+    (tmp_path / "reset_state.json").write_text(
+        json.dumps(corrupt_state), encoding="utf-8"
+    )
     plugin = _make_plugin(tmp_path)
     assert not _gstate(plugin).get("feed_baseline_done")
     assert not _gstate(plugin).get("notified_keys")
@@ -1437,7 +1486,9 @@ def test_state_rollback_preserves_tibo_dedup_state(tmp_path):
             },
         },
     }
-    (tmp_path / "reset_state.json").write_text(json.dumps(future_state), encoding="utf-8")
+    (tmp_path / "reset_state.json").write_text(
+        json.dumps(future_state), encoding="utf-8"
+    )
     plugin = _make_plugin(tmp_path)
     assert _gstate(plugin)["feed_baseline_done"] is True
     assert _parse_iso(_gstate(plugin)["last_notified_reset_at"]) == moment
@@ -1473,7 +1524,9 @@ def test_state_rollback_drops_corrupt_tibo_fields(tmp_path):
             "active_plan": {"reset_at": "garbage", "source_url": 7},
         },
     }
-    (tmp_path / "reset_state.json").write_text(json.dumps(corrupt_state), encoding="utf-8")
+    (tmp_path / "reset_state.json").write_text(
+        json.dumps(corrupt_state), encoding="utf-8"
+    )
     plugin = _make_plugin(tmp_path)
     assert _gstate(plugin)["feed_baseline_done"] is True
     assert _gstate(plugin)["notified_keys"] == ["banked:1:announced"]
@@ -1543,7 +1596,9 @@ def test_migration_marker_false_with_existing_list_never_overwrites(tmp_path):
 def test_group_ids_stripped_deduped_preserve_order():
     plugin = CodexResetWatcher()
     plugin.set_plugin_config(
-        _config_for(group_ids=[" 100000001 ", "", "100000001", "100000002", " 100000003 "])
+        _config_for(
+            group_ids=[" 100000001 ", "", "100000001", "100000002", " 100000003 "]
+        )
     )
     assert plugin.config.watcher.group_ids == ["100000001", "100000002", "100000003"]
     assert plugin._target_groups() == ["100000001", "100000002", "100000003"]  # noqa: SLF001
@@ -1709,7 +1764,14 @@ def test_multi_group_feed_failure_only_failed_group_retries(tmp_path, monkeypatc
     assert sent == ["100000001", "100000001", "100000001"]
     # 第二轮：100000001 静默，100000002 重试成功。
     asyncio.run(check_and_drain())
-    assert sent == ["100000001", "100000001", "100000001", "100000002", "100000002", "100000002"]
+    assert sent == [
+        "100000001",
+        "100000001",
+        "100000001",
+        "100000002",
+        "100000002",
+        "100000002",
+    ]
     assert "banked:2095651088502591861:announced" in set(
         _gstate(plugin, "100000002")["notified_keys"]
     )
@@ -1732,12 +1794,16 @@ def test_multi_group_time_changed_per_group_plan_semantics(tmp_path):
     plugin._send_group_text = flaky_send  # type: ignore[method-assign]
     asyncio.run(
         plugin._maybe_notify(
-            _conclusion(kind="scheduled", hours=2.0), ["100000001", "100000002"], BEIJING  # noqa: SLF001
+            _conclusion(kind="scheduled", hours=2.0),
+            ["100000001", "100000002"],
+            BEIJING,  # noqa: SLF001
         )
     )
     asyncio.run(
         plugin._maybe_notify(
-            _conclusion(kind="time_changed", hours=4.0), ["100000001", "100000002"], BEIJING  # noqa: SLF001
+            _conclusion(kind="time_changed", hours=4.0),
+            ["100000001", "100000002"],
+            BEIJING,  # noqa: SLF001
         )
     )
     bodies = dict(sent)
@@ -1845,9 +1911,9 @@ def test_runner_style_upgrade_path_with_real_sdk(tmp_path):
         doc[section] = table
     reparsed = dict(tomlkit.parse(tomlkit.dumps(doc)))
     assert 'group_ids = ["100000001"]' in tomlkit.dumps(doc)
-    assert validate_plugin_config(CodexResetWatcherConfig, reparsed).watcher.group_ids == [
-        "100000001"
-    ]
+    assert validate_plugin_config(
+        CodexResetWatcherConfig, reparsed
+    ).watcher.group_ids == ["100000001"]
 
     # 用户清空列表（marker 已置位）→ 不回填、无变更
     cleared = dict(normalized)
@@ -1896,9 +1962,7 @@ def test_age_guard_already_recorded_key_next_round_fully_silent(
     assert not (tmp_path / "reset_state.json").exists()  # 0 落盘
 
 
-def test_age_guard_first_encounter_logs_once_then_silent(
-    tmp_path, monkeypatch, caplog
-):
+def test_age_guard_first_encounter_logs_once_then_silent(tmp_path, monkeypatch, caplog):
     """首次遇到且尚未记录的过期信号：age-guard 日志恰好一次并写入 key；
     下一轮同一 feed：不再打印、0 发送、0 state 变化。"""
     import copy
@@ -2043,6 +2107,7 @@ def _wire_forecast(
         return None
 
     plugin._get_json = fake_get  # type: ignore[method-assign]
+
 
 def _wire_providers(
     plugin: CodexResetWatcher,
@@ -2274,9 +2339,12 @@ def test_real_0908_forecast_mirrors_once_then_dedups(tmp_path):
     assert _gstate(plugin)["upstream_alert_keys"] == [
         "upstream-alert:signal:2097043464538264003:likely"
     ]
-    assert json.loads(
-        (tmp_path / "reset_state.json").read_text(encoding="utf-8")
-    )["version"] == 6  # state schema 仍 v6，只是新增键
+    assert (
+        json.loads((tmp_path / "reset_state.json").read_text(encoding="utf-8"))[
+            "version"
+        ]
+        == 6
+    )  # state schema 仍 v6，只是新增键
     # 第二轮同 id：静默。
     asyncio.run(asyncio.wait_for(once(), 10))
     assert len(plugin._ctx.send.sent_messages) == 1
@@ -2287,7 +2355,11 @@ def test_tier_upgrade_new_alert_event_id_mirrors_again(tmp_path):
     作为新告警镜像，不得被去重吞掉。"""
     plugin = _make_plugin(tmp_path)
     _wire_providers(plugin, fx=None, vx=None)  # providers 全挂 → forecast 摘录
-    asyncio.run(plugin._process_upstream_alert(_probe("live/forensic_0908/forecast_0908.json"), ["100000001"]))  # noqa: SLF001
+    asyncio.run(
+        plugin._process_upstream_alert(
+            _probe("live/forensic_0908/forecast_0908.json"), ["100000001"]
+        )
+    )  # noqa: SLF001
     upgraded = _osig(
         signal_tier="strong",
         alert_event_id="signal:2097043464538264003:strong",
@@ -2326,7 +2398,8 @@ def test_upstream_alert_multi_group_failed_group_retries(tmp_path):
 
     async def round(n_expected: int) -> None:
         await plugin._process_upstream_alert(
-            forecast, ["100000001", "100000002"]  # noqa: SLF001
+            forecast,
+            ["100000001", "100000002"],  # noqa: SLF001
         )
         while plugin._inflight:  # 等待后台管线完成
             await asyncio.sleep(0.01)
@@ -2373,7 +2446,8 @@ def test_upstream_alert_send_failure_records_nothing(tmp_path):
     _wire_providers(plugin, fx=None, vx=None)
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"]  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],  # noqa: SLF001
         )
     )
     assert plugin._ctx.send.sent_messages == []
@@ -2392,7 +2466,8 @@ def test_upstream_alert_keys_survive_state_reload(tmp_path):
 
     async def run_and_drain() -> None:
         await plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"]  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],  # noqa: SLF001
         )
         while plugin._inflight:  # 等待后台管线完成
             await asyncio.sleep(0.01)
@@ -2424,7 +2499,8 @@ def test_upstream_alert_keys_survive_without_feed_baseline(tmp_path):
 
     async def run_and_drain() -> None:
         await plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"]  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],  # noqa: SLF001
         )
         while plugin._inflight:  # 等待后台管线完成
             await asyncio.sleep(0.01)
@@ -2437,9 +2513,7 @@ def test_upstream_alert_keys_survive_without_feed_baseline(tmp_path):
     assert _gstate(reloaded)["upstream_alert_keys"] == [
         "upstream-alert:signal:2097043464538264003:likely"
     ]
-    assert _gstate(reloaded)["upstream_alert_tweet_ids"] == [
-        "2097043464538264003"
-    ]
+    assert _gstate(reloaded)["upstream_alert_tweet_ids"] == ["2097043464538264003"]
     # 重载后同一 upstream alert 静默（不得重复镜像）。
     asyncio.run(
         reloaded._process_upstream_alert(  # noqa: SLF001
@@ -2525,7 +2599,8 @@ def test_golden_fx_provider_through_production_path(tmp_path):
     _wire_providers(plugin, fx=_FX_GOLDEN)
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"]  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],  # noqa: SLF001
         )
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
@@ -2542,7 +2617,8 @@ def test_fx_timeout_falls_to_vxtwitter(tmp_path):
     calls = _wire_providers(plugin, fx=TimeoutError(), vx=_VX_GOLDEN)
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"]  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],  # noqa: SLF001
         )
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
@@ -2558,7 +2634,8 @@ def test_fx_404_or_bad_payload_falls_to_vxtwitter(tmp_path):
     calls = _wire_providers(plugin, fx={}, vx=_VX_GOLDEN)  # {} = 无 tweet 字段
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"]  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],  # noqa: SLF001
         )
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
@@ -2573,17 +2650,24 @@ def test_both_providers_fail_uses_feed_text(tmp_path):
     calls = _wire_providers(plugin, fx=None, vx=None)
     feed = {
         "tweets": [
-            {"id": "2097043464538264003", "text": "feed 280 字文本，比 39 字 summary 更长——" + "f" * 60},
+            {
+                "id": "2097043464538264003",
+                "text": "feed 280 字文本，比 39 字 summary 更长——" + "f" * 60,
+            },
         ]
     }
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"], feed  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],
+            feed,  # noqa: SLF001
         )
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert len(bodies) == 1
-    assert "Tibo 原文摘录：" in bodies[0] and ("f" * 60) in bodies[0]  # feed 候选更长 → 获胜
+    assert (
+        "Tibo 原文摘录：" in bodies[0] and ("f" * 60) in bodies[0]
+    )  # feed 候选更长 → 获胜
     assert len(calls["fx"]) == 1 and len(calls["vx"]) == 1  # 顺序：先 fx 后 vx
 
 
@@ -2597,14 +2681,23 @@ def test_l4_summary_only_never_displayed_nor_translated(tmp_path):
 
     async def fake_llm(prompt, model="", temperature=None, max_tokens=None, **kwargs):
         llm_calls["n"] += 1
-        return {"success": True, "response": json.dumps({"translation_zh": "不应出现的翻译"}, ensure_ascii=False), "model_name": "m1", "total_tokens": 1}
+        return {
+            "success": True,
+            "response": json.dumps(
+                {"translation_zh": "不应出现的翻译"}, ensure_ascii=False
+            ),
+            "model_name": "m1",
+            "total_tokens": 1,
+        }
 
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
     calls = _wire_providers(plugin, fx=None, vx=None)
     feed = {"tweets": [{"id": "999", "text": "无关推文"}]}
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"], feed  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],
+            feed,  # noqa: SLF001
         )
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
@@ -2625,7 +2718,7 @@ def test_all_text_sources_missing_still_sends(tmp_path):
     """providers/feed/summary 全缺失：alert 仍然发送（标题+置信度+原帖），
     绝不因正文为空而漏报。"""
     plugin = _make_plugin(tmp_path)
-    calls = _wire_providers(plugin, fx=None, vx=None)
+    _wire_providers(plugin, fx=None, vx=None)
     osig = {
         "delivery_destination": "alerts",
         "alert_event_id": "signal:BARE:likely",
@@ -2634,7 +2727,9 @@ def test_all_text_sources_missing_still_sends(tmp_path):
     }
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": osig}, ["100000001"], None  # noqa: SLF001
+            {"official_signal": osig},
+            ["100000001"],
+            None,  # noqa: SLF001
         )
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
@@ -2658,7 +2753,8 @@ def test_provider_call_receives_timeout_budget(tmp_path):
     calls = _wire_providers(plugin, fx=None, vx=None)
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"]  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],  # noqa: SLF001
         )
     )
     assert calls["fx"][0][1] == plugin_module.PROVIDER_TIMEOUT_SECONDS
@@ -2672,7 +2768,8 @@ def test_multi_group_single_fetch_shared_content(tmp_path):
 
     async def fetch_once_and_mirror_both() -> None:
         await plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001", "100000002"]  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001", "100000002"],  # noqa: SLF001
         )
         while plugin._inflight:  # 等待后台管线完成
             await asyncio.sleep(0.01)
@@ -2694,7 +2791,8 @@ def test_all_groups_deduped_zero_provider_requests(tmp_path):
     calls = _wire_providers(plugin, fx=_FX_GOLDEN)
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001", "100000002"]  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001", "100000002"],  # noqa: SLF001
         )
     )
     assert calls["fx"] == [] and calls["vx"] == []
@@ -2708,9 +2806,7 @@ def test_retry_refetches_but_never_duplicated_for_success_group(tmp_path):
     calls_holder = {"calls": None}
 
     async def flaky_send(group_id: str, message: str) -> bool:
-        if group_id == "100000002" and len(
-            calls_holder["calls"]["fx"]
-        ) == 1:
+        if group_id == "100000002" and len(calls_holder["calls"]["fx"]) == 1:
             return False  # 第一轮 B 失败
         sent.append(group_id)
         return True
@@ -2736,10 +2832,14 @@ def test_provider_malformed_payload_falls_through(tmp_path):
     """provider 字段未知/缺失（无 tweet / 空 text）→ 降级，不影响告警。"""
     plugin = _make_plugin(tmp_path)
     calls = _wire_providers(plugin, fx={"foo": 1}, vx={"text": "   "})
-    feed = {"tweets": [{"id": "2097043464538264003", "text": "feed 兜底文本——" + "m" * 60}]}
+    feed = {
+        "tweets": [{"id": "2097043464538264003", "text": "feed 兜底文本——" + "m" * 60}]
+    }
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"], feed  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],
+            feed,  # noqa: SLF001
         )
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
@@ -2771,7 +2871,8 @@ def test_fx_full_returns_immediately_vx_not_called(tmp_path):
     calls = _wire_providers(plugin, fx=_FX_GOLDEN)
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"]  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],  # noqa: SLF001
         )
     )
     assert len(calls["fx"]) == 1 and calls["vx"] == []
@@ -2788,7 +2889,8 @@ def test_fx_unknown_vx_full_wins(tmp_path):
     calls = _wire_providers(plugin, fx=truncated_note, vx=_VX_GOLDEN)
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"]  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],  # noqa: SLF001
         )
     )
     assert len(calls["fx"]) == 1 and len(calls["vx"]) == 1  # 都被尝试
@@ -2810,7 +2912,9 @@ def test_both_unknown_keeps_longer_candidate(tmp_path):
     feed = {"tweets": [{"id": "2097043464538264003", "text": "q" * 50}]}
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"], feed  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],
+            feed,  # noqa: SLF001
         )
     )
     assert len(calls["fx"]) == 1 and len(calls["vx"]) == 1
@@ -2829,7 +2933,8 @@ def test_fx_unknown_shorter_vx_unknown_longer_takes_vx(tmp_path):
     _wire_providers(plugin, fx=fx_unknown, vx=vx_unknown)
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"]  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],  # noqa: SLF001
         )
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
@@ -2845,7 +2950,9 @@ def test_fx_unknown_kept_when_no_better_source(tmp_path):
     _wire_providers(plugin, fx=fx_unknown, vx=None)
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"], None  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],
+            None,  # noqa: SLF001
         )
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
@@ -2862,7 +2969,9 @@ def test_feed_fallback_requires_matching_tweet_id(tmp_path):
     feed = {"tweets": [{"id": "111", "text": "无关推文"}]}
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"], feed  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],
+            feed,  # noqa: SLF001
         )
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
@@ -2875,6 +2984,7 @@ def test_feed_fallback_requires_matching_tweet_id(tmp_path):
 
 
 # ===== v0.1.8 LLM enrichment（总预算状态机 / inflight / state 锁 / JSON 管道）=====
+
 
 def _llm_plugin(tmp_path: Path, llm_overrides: dict | None = None, **watcher: object):
     """带 [llm] 配置的插件；fx=golden、llm 可在测试中再覆写。"""
@@ -2892,13 +3002,21 @@ def test_llm_success_adds_translation(tmp_path):
     （原文照旧保留），且不出现任何退役的 AI 解读字段与内部实现词。"""
     plugin = _llm_plugin(tmp_path)
     good = {"translation_zh": "祝你说谎愉快……全球重置预计今天北京时间 10:00 左右落地"}
+
     async def fake_llm(prompt, model="", temperature=None, max_tokens=None, **kwargs):
-        return {"success": True, "response": json.dumps(good, ensure_ascii=False), "model_name": "m1", "total_tokens": 100}
+        return {
+            "success": True,
+            "response": json.dumps(good, ensure_ascii=False),
+            "model_name": "m1",
+            "total_tokens": 100,
+        }
 
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"], None  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],
+            None,  # noqa: SLF001
         )
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
@@ -2926,12 +3044,20 @@ def test_llm_host_failure_no_repair_alert_still_sent(tmp_path):
 
     async def fake_llm(prompt, model="", temperature=None, max_tokens=None, **kwargs):
         llm_calls["n"] += 1
-        return {"success": False, "error": "boom", "response": "", "model_name": "m1", "total_tokens": 0}
+        return {
+            "success": False,
+            "error": "boom",
+            "response": "",
+            "model_name": "m1",
+            "total_tokens": 0,
+        }
 
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"], None  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],
+            None,  # noqa: SLF001
         )
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
@@ -2952,7 +3078,9 @@ def test_llm_rpc_exception_no_repair(tmp_path):
     plugin.ctx.llm.generate = boom  # type: ignore[method-assign]
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"], None  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],
+            None,  # noqa: SLF001
         )
     )
     assert llm_calls["n"] == 1
@@ -2964,17 +3092,34 @@ def test_llm_bad_json_one_repair_then_success(tmp_path):
     """首次输出坏 JSON（含围栏与杂讯）→ 用剩余预算修复一次 → 成功。"""
     plugin = _llm_plugin(tmp_path)
     good = {"translation_zh": "完整中文翻译"}
-    responses = ["抱歉，我无法输出……```json{broken```", "好的：" + json.dumps(good, ensure_ascii=False)]
+    responses = [
+        "抱歉，我无法输出……```json{broken```",
+        "好的：" + json.dumps(good, ensure_ascii=False),
+    ]
     rpc_timeouts: list[int] = []
 
-    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, rpc_timeout_ms=None, **kwargs):
+    async def fake_llm(
+        prompt,
+        model="",
+        temperature=None,
+        max_tokens=None,
+        rpc_timeout_ms=None,
+        **kwargs,
+    ):
         rpc_timeouts.append(rpc_timeout_ms)
-        return {"success": True, "response": responses[len(rpc_timeouts) - 1], "model_name": "m1", "total_tokens": 1}
+        return {
+            "success": True,
+            "response": responses[len(rpc_timeouts) - 1],
+            "model_name": "m1",
+            "total_tokens": 1,
+        }
 
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"], None  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],
+            None,  # noqa: SLF001
         )
     )
     assert len(rpc_timeouts) == 2  # 恰好一次修复
@@ -2992,12 +3137,19 @@ def test_llm_bad_json_repair_fails_alert_still_sent(tmp_path):
 
     async def fake_llm(prompt, model="", temperature=None, max_tokens=None, **kwargs):
         llm_calls["n"] += 1
-        return {"success": True, "response": "not json at all", "model_name": "m1", "total_tokens": 0}
+        return {
+            "success": True,
+            "response": "not json at all",
+            "model_name": "m1",
+            "total_tokens": 0,
+        }
 
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"], None  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],
+            None,  # noqa: SLF001
         )
     )
     assert llm_calls["n"] == 2  # 首次+一次修复
@@ -3013,15 +3165,29 @@ def test_llm_budget_exhausted_skips_repair(tmp_path, monkeypatch):
     llm_calls = {"n": 0}
     monkeypatch.setattr(plugin_module.time, "monotonic", lambda: clock["now"])
 
-    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, rpc_timeout_ms=None, **kwargs):
+    async def fake_llm(
+        prompt,
+        model="",
+        temperature=None,
+        max_tokens=None,
+        rpc_timeout_ms=None,
+        **kwargs,
+    ):
         llm_calls["n"] += 1
         clock["now"] += plugin.config.llm.timeout_seconds - 3  # 消耗预算至剩 3 秒（<5）
-        return {"success": True, "response": "broken", "model_name": "m1", "total_tokens": 0}
+        return {
+            "success": True,
+            "response": "broken",
+            "model_name": "m1",
+            "total_tokens": 0,
+        }
 
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"], None  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],
+            None,  # noqa: SLF001
         )
     )
     assert llm_calls["n"] == 1  # 预算耗尽，不再修复
@@ -3038,7 +3204,9 @@ def test_llm_disabled_no_llm_call(tmp_path):
     plugin.ctx.llm.generate = fail  # type: ignore[method-assign]
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"], None  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],
+            None,  # noqa: SLF001
         )
     )
     assert len(plugin._ctx.send.sent_messages) == 1  # v0.1.7 通知照常
@@ -3047,7 +3215,10 @@ def test_llm_disabled_no_llm_call(tmp_path):
 def test_llm_translation_validation_newlines_caps_and_defaults():
     """translation-only 校验：保留换行（歌词/分段忠实性）、CRLF 统一、
     去首尾空白；空/类型不符 → None；未知字段忽略；限幅只防病态输出。"""
-    assert _validate_llm_translation({"translation_zh": "第一行\n第二行"}) == "第一行\n第二行"
+    assert (
+        _validate_llm_translation({"translation_zh": "第一行\n第二行"})
+        == "第一行\n第二行"
+    )
     assert _validate_llm_translation({"translation_zh": "a\r\nb\rc"}) == "a\nb\nc"
     assert _validate_llm_translation({"translation_zh": "  x  "}) == "x"
     assert _validate_llm_translation({"translation_zh": 42}) is None
@@ -3098,12 +3269,21 @@ def test_llm_never_overrides_alert_decision(tmp_path):
     plugin = _llm_plugin(tmp_path)
 
     async def fake_llm(prompt, model="", temperature=None, max_tokens=None, **kwargs):
-        return {"success": True, "response": json.dumps({"translation_zh": "我认为这不是 Reset，不该发送"}, ensure_ascii=False), "model_name": "m1", "total_tokens": 0}
+        return {
+            "success": True,
+            "response": json.dumps(
+                {"translation_zh": "我认为这不是 Reset，不该发送"}, ensure_ascii=False
+            ),
+            "model_name": "m1",
+            "total_tokens": 0,
+        }
 
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"], None  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],
+            None,  # noqa: SLF001
         )
     )
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
@@ -3134,7 +3314,9 @@ def test_inflight_dedup_single_pipeline(tmp_path):
         assert list(plugin._inflight.keys()) == [
             "upstream-alert:signal:2097043464538264003:likely"
         ]
-        await plugin._process_upstream_alert(forecast, ["100000001"], None)  # inflight 命中
+        await plugin._process_upstream_alert(
+            forecast, ["100000001"], None
+        )  # inflight 命中
         assert fx_calls["n"] == 0  # inflight 命中：未重复启动管线
         release.set()
         while plugin._inflight:
@@ -3158,7 +3340,9 @@ def test_on_unload_gathers_inflight(tmp_path):
     plugin._get_json = hanging_get  # type: ignore[method-assign]
 
     async def scenario():
-        await plugin._process_upstream_alert({"official_signal": _osig()}, ["100000001"], None)
+        await plugin._process_upstream_alert(
+            {"official_signal": _osig()}, ["100000001"], None
+        )
         assert plugin._inflight
         release.set()
         while plugin._inflight:
@@ -3166,7 +3350,9 @@ def test_on_unload_gathers_inflight(tmp_path):
         # 重新制造 in-flight 再 unload
         release.clear()
         osig_b = _osig(alert_event_id="signal:2097043464538264003:strong")
-        await plugin._process_upstream_alert({"official_signal": osig_b}, ["100000001"], None)
+        await plugin._process_upstream_alert(
+            {"official_signal": osig_b}, ["100000001"], None
+        )
         assert plugin._inflight
         await plugin.on_unload()  # cancel + gather
         assert plugin._inflight == {}
@@ -3196,10 +3382,14 @@ def test_state_lock_concurrent_receipts_no_loss(tmp_path):
 
     async def scenario():
         task_a = asyncio.create_task(
-            plugin._process_upstream_alert({"official_signal": osig_a}, ["100000001"], None)
+            plugin._process_upstream_alert(
+                {"official_signal": osig_a}, ["100000001"], None
+            )
         )
         task_b = asyncio.create_task(
-            plugin._process_upstream_alert({"official_signal": osig_b}, ["100000001"], None)
+            plugin._process_upstream_alert(
+                {"official_signal": osig_b}, ["100000001"], None
+            )
         )
         await asyncio.sleep(0.05)  # 两个 task 都进入 slow_send 等待窗口
         gate.set()
@@ -3218,18 +3408,20 @@ def test_state_lock_concurrent_receipts_no_loss(tmp_path):
 def test_llm_config_sanitize_clamps_invalid(tmp_path):
     """[llm] 非法配置 normalize 到安全值；空 prompt 恢复默认。"""
     plugin = _make_plugin(tmp_path)
-    normalized, changed = plugin.normalize_plugin_config({
-        "plugin": {"enabled": True, "config_version": "1.2.0"},
-        "watcher": {"group_ids": ["100000001"], "group_ids_migrated": True},
-        "llm": {
-            "enabled": "yes",
-            "model_task": "  ",
-            "temperature": 5.0,
-            "max_tokens": 0,
-            "timeout_seconds": 1,
-            "prompt": "   ",
-        },
-    })
+    normalized, changed = plugin.normalize_plugin_config(
+        {
+            "plugin": {"enabled": True, "config_version": "1.2.0"},
+            "watcher": {"group_ids": ["100000001"], "group_ids_migrated": True},
+            "llm": {
+                "enabled": "yes",
+                "model_task": "  ",
+                "temperature": 5.0,
+                "max_tokens": 0,
+                "timeout_seconds": 1,
+                "prompt": "   ",
+            },
+        }
+    )
     assert changed is True
     llm = normalized["llm"]
     assert llm["enabled"] is True  # 非布尔 → bool() 归一
@@ -3251,7 +3443,10 @@ def test_llm_config_schema_widgets(tmp_path):
     assert fields["temperature"]["type"] == "number"
     assert fields["temperature"]["min"] == 0 and fields["temperature"]["max"] == 2
     assert fields["max_tokens"]["type"] == "integer"
-    assert fields["timeout_seconds"]["min"] == 30 and fields["timeout_seconds"]["max"] == 1800
+    assert (
+        fields["timeout_seconds"]["min"] == 30
+        and fields["timeout_seconds"]["max"] == 1800
+    )
     assert fields["prompt"]["ui_type"] == "textarea" and fields["prompt"]["rows"] == 12
     assert fields["prompt"]["default"].strip() != ""  # 默认 prompt 非空、可直接工作
 
@@ -3259,14 +3454,17 @@ def test_llm_config_schema_widgets(tmp_path):
 # ===== v0.1.8 部署 blocker 修正：manifest capabilities / on_load 校验 /
 # stale-group 竞态 / config-update cancel =====
 
+
 def test_manifest_declares_llm_capabilities():
     """manifest 必须声明 llm.generate（Host 按 manifest capabilities 做授权
     注册，未声明即被拒）；v0.1.11 起 model_task 改为固定推荐单选，动态
     枚举已移除 → llm.get_available_models 不再声明。"""
-    manifest = json.load(open(
-        Path(__file__).resolve().parent / "_manifest.json",
-        encoding="utf-8",
-    ))
+    manifest = json.load(
+        open(
+            Path(__file__).resolve().parent / "_manifest.json",
+            encoding="utf-8",
+        )
+    )
     caps = manifest["capabilities"]
     assert "llm.generate" in caps
     assert "llm.get_available_models" not in caps
@@ -3283,8 +3481,8 @@ def test_stale_group_removed_mid_pipeline_skipped_and_no_receipt(tmp_path):
     async def racing_send(group_id: str, message: str) -> bool:
         if group_id == "100000001":
             # A 发送成功后、管线继续处理 B 之前，配置删除 B（模拟热更新竞态）
-            plugin.set_plugin_config(_config_for(
-                group_ids=["100000001"], group_ids_migrated=True)
+            plugin.set_plugin_config(
+                _config_for(group_ids=["100000001"], group_ids_migrated=True)
             )
             plugin._reconcile_groups()
             b_removed.set()
@@ -3296,12 +3494,16 @@ def test_stale_group_removed_mid_pipeline_skipped_and_no_receipt(tmp_path):
 
     plugin._send_group_text = racing_send  # type: ignore[method-assign]
     _wire_providers(plugin, fx=_FX_GOLDEN)
+
     async def scenario():
         await plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001", "100000002"], None  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001", "100000002"],
+            None,  # noqa: SLF001
         )
         while plugin._inflight:
             await asyncio.sleep(0.01)
+
     asyncio.run(asyncio.wait_for(scenario(), 5))
     streams = [s for s, _ in plugin._ctx.send.sent_messages]
 
@@ -3327,24 +3529,39 @@ def test_on_config_update_cancels_inflight_and_recovers(tmp_path):
     new_config = {
         "plugin": {"enabled": True, "config_version": "1.2.0"},
         "watcher": {"group_ids": ["100000001"], "group_ids_migrated": True},
-        "llm": {"enabled": False, "model_task": "utils", "temperature": 0.2,
-                 "max_tokens": 4096, "timeout_seconds": 600, "prompt": "p"},
+        "llm": {
+            "enabled": False,
+            "model_task": "utils",
+            "temperature": 0.2,
+            "max_tokens": 4096,
+            "timeout_seconds": 600,
+            "prompt": "p",
+        },
     }
 
     async def scenario():
-        await plugin._process_upstream_alert({"official_signal": _osig()}, ["100000001"], None)
+        await plugin._process_upstream_alert(
+            {"official_signal": _osig()}, ["100000001"], None
+        )
         assert plugin._inflight  # 管线在途
         await plugin.on_config_update("self", new_config, "1")
         assert plugin._inflight == {}  # 旧管线已被取消并回收
         release.set()
         # 下一轮按新配置重新处理未 receipt 的 alert（llm disabled → 无 AI 块）
-        await plugin._process_upstream_alert({"official_signal": _osig()}, ["100000001"], None)
+        await plugin._process_upstream_alert(
+            {"official_signal": _osig()}, ["100000001"], None
+        )
         while plugin._inflight:
             await asyncio.sleep(0.01)
         # 悬空 task 检查：除 watcher 主循环外无遗留 pipeline task
-        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()
-                   and t.get_name() != "codex-reset-watcher"
-                   and "codex-alert" in (t.get_name() or "")]
+        pending = [
+            t
+            for t in asyncio.all_tasks()
+            if t is not asyncio.current_task()
+            and not t.done()
+            and t.get_name() != "codex-reset-watcher"
+            and "codex-alert" in (t.get_name() or "")
+        ]
         assert pending == []
 
     asyncio.run(asyncio.wait_for(scenario(), 5))
@@ -3355,6 +3572,7 @@ def test_on_config_update_cancels_inflight_and_recovers(tmp_path):
 
 # ===== v0.1.8 二次修正：config-update orphan 竞态 + LLM 信息边界 =====
 
+
 def test_llm_prompt_contains_no_internal_provider_terms(tmp_path):
     """信息边界：发给 ctx.llm.generate 的实际 prompt 中不得出现内部
     Provider/数据源 taxonomy（fxtwitter/vxtwitter/content_source/forecast）；
@@ -3364,14 +3582,28 @@ def test_llm_prompt_contains_no_internal_provider_terms(tmp_path):
     captured: dict = {}
     good = {"translation_zh": "翻译内容"}
 
-    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, rpc_timeout_ms=None, **kwargs):
+    async def fake_llm(
+        prompt,
+        model="",
+        temperature=None,
+        max_tokens=None,
+        rpc_timeout_ms=None,
+        **kwargs,
+    ):
         captured["prompt"] = prompt
-        return {"success": True, "response": json.dumps(good, ensure_ascii=False), "model_name": "m1", "total_tokens": 1}
+        return {
+            "success": True,
+            "response": json.dumps(good, ensure_ascii=False),
+            "model_name": "m1",
+            "total_tokens": 1,
+        }
 
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"], None  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],
+            None,  # noqa: SLF001
         )
     )
     assert "prompt" in captured
@@ -3395,7 +3627,13 @@ def test_llm_prompt_contains_no_internal_provider_terms(tmp_path):
         "around / approximately / ~",
     ):
         assert keyword in CONTRACT_PROMPT, keyword
-    for term in ("fxtwitter", "vxtwitter", "content_source", "forecast", "api.fxtwitter.com"):
+    for term in (
+        "fxtwitter",
+        "vxtwitter",
+        "content_source",
+        "forecast",
+        "api.fxtwitter.com",
+    ):
         assert term not in joined, term
 
 
@@ -3406,15 +3644,29 @@ def test_l4_published_at_falls_back_to_feed_tweet_at(tmp_path):
     plugin = _llm_plugin(tmp_path)
     captured: dict = {}
 
-    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, rpc_timeout_ms=None, **kwargs):
+    async def fake_llm(
+        prompt,
+        model="",
+        temperature=None,
+        max_tokens=None,
+        rpc_timeout_ms=None,
+        **kwargs,
+    ):
         captured["messages"] = prompt
-        return {"success": True, "response": json.dumps({"translation_zh": "译"}, ensure_ascii=False), "model_name": "m1", "total_tokens": 1}
+        return {
+            "success": True,
+            "response": json.dumps({"translation_zh": "译"}, ensure_ascii=False),
+            "model_name": "m1",
+            "total_tokens": 1,
+        }
 
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
     feed = {"tweets": [{"id": "2097043464538264003", "at": "2026-09-07T19:00:00.000Z"}]}
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig(at="")}, ["100000001"], feed  # noqa: SLF001
+            {"official_signal": _osig(at="")},
+            ["100000001"],
+            feed,  # noqa: SLF001
         )
     )
     joined = "".join(str(m.get("content", "")) for m in captured["messages"])
@@ -3431,15 +3683,29 @@ def test_l4_published_at_unknown_when_no_at_anywhere(tmp_path):
     plugin = _llm_plugin(tmp_path)
     captured: dict = {}
 
-    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, rpc_timeout_ms=None, **kwargs):
+    async def fake_llm(
+        prompt,
+        model="",
+        temperature=None,
+        max_tokens=None,
+        rpc_timeout_ms=None,
+        **kwargs,
+    ):
         captured["messages"] = prompt
-        return {"success": True, "response": json.dumps({"translation_zh": "译"}, ensure_ascii=False), "model_name": "m1", "total_tokens": 1}
+        return {
+            "success": True,
+            "response": json.dumps({"translation_zh": "译"}, ensure_ascii=False),
+            "model_name": "m1",
+            "total_tokens": 1,
+        }
 
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
     feed = {"tweets": [{"id": "2097043464538264003", "text": "x"}]}  # 无 at
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig(at="")}, ["100000001"], feed  # noqa: SLF001
+            {"official_signal": _osig(at="")},
+            ["100000001"],
+            feed,  # noqa: SLF001
         )
     )
     joined = "".join(str(m.get("content", "")) for m in captured["messages"])
@@ -3451,15 +3717,29 @@ def test_l4_published_at_prefers_official_signal_at(tmp_path):
     plugin = _llm_plugin(tmp_path)
     captured: dict = {}
 
-    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, rpc_timeout_ms=None, **kwargs):
+    async def fake_llm(
+        prompt,
+        model="",
+        temperature=None,
+        max_tokens=None,
+        rpc_timeout_ms=None,
+        **kwargs,
+    ):
         captured["messages"] = prompt
-        return {"success": True, "response": json.dumps({"translation_zh": "译"}, ensure_ascii=False), "model_name": "m1", "total_tokens": 1}
+        return {
+            "success": True,
+            "response": json.dumps({"translation_zh": "译"}, ensure_ascii=False),
+            "model_name": "m1",
+            "total_tokens": 1,
+        }
 
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
     feed = {"tweets": [{"id": "2097043464538264003", "at": "2026-09-07T19:00:00.000Z"}]}
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"], feed  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],
+            feed,  # noqa: SLF001
         )
     )
     joined = "".join(str(m.get("content", "")) for m in captured["messages"])
@@ -3471,7 +3751,9 @@ def test_config_update_race_no_orphan_alert_task(tmp_path):
     gather；gather 窗口内被创建的新 alert B 不得被抹成 orphan。
     终态：无旧 A receipt、B 正常完成、inflight 清空、无未追踪
     codex-alert-* task、watcher 按新配置重启。"""
-    plugin = _llm_plugin(tmp_path, group_id="", group_ids=["100000001"], llm_overrides={"enabled": False})
+    plugin = _llm_plugin(
+        tmp_path, group_id="", group_ids=["100000001"], llm_overrides={"enabled": False}
+    )
     release = asyncio.Event()
     provider_calls = {"n": 0}
 
@@ -3484,7 +3766,9 @@ def test_config_update_race_no_orphan_alert_task(tmp_path):
                 # A 被取消的瞬间：竞态窗口内另一生产者创建 alert B
                 osig_b = _osig(alert_event_id="signal:2097043464538264003:strong")
                 asyncio.create_task(
-                    plugin._process_upstream_alert({"official_signal": osig_b}, ["100000001"], None)
+                    plugin._process_upstream_alert(
+                        {"official_signal": osig_b}, ["100000001"], None
+                    )
                 )
                 raise
         return _FX_GOLDEN
@@ -3493,12 +3777,20 @@ def test_config_update_race_no_orphan_alert_task(tmp_path):
     new_config = {
         "plugin": {"enabled": True, "config_version": "1.2.0"},
         "watcher": {"group_ids": ["100000001"], "group_ids_migrated": True},
-        "llm": {"enabled": False, "model_task": "utils", "temperature": 0.2,
-                 "max_tokens": 4096, "timeout_seconds": 600, "prompt": "p"},
+        "llm": {
+            "enabled": False,
+            "model_task": "utils",
+            "temperature": 0.2,
+            "max_tokens": 4096,
+            "timeout_seconds": 600,
+            "prompt": "p",
+        },
     }
 
     async def scenario():
-        await plugin._process_upstream_alert({"official_signal": _osig()}, ["100000001"], None)
+        await plugin._process_upstream_alert(
+            {"official_signal": _osig()}, ["100000001"], None
+        )
         assert plugin._inflight  # A 在途
         # v0.1.12 并发采样修正配套：先让 A 管线真实进入 provider 调用并
         # 挂住（事件驱动等待，非 sleep 猜时序）——否则 A 是从未运行的
@@ -3506,21 +3798,28 @@ def test_config_update_race_no_orphan_alert_task(tmp_path):
         # shutdown 阶段的调度巧合（_check_once 三源 gather 化后暴露）。
         while provider_calls["n"] < 1:
             await asyncio.sleep(0.01)
-        await plugin.on_config_update("self", new_config, "1")  # 先停 watcher，再 cancel+gather
+        await plugin.on_config_update(
+            "self", new_config, "1"
+        )  # 先停 watcher，再 cancel+gather
         # gather 窗口内创建的 B 已注册并在跑；等待其自然完成
         while plugin._inflight:
             await asyncio.sleep(0.01)
         # 无未追踪 codex-alert-* task（inflight 与真实 all_tasks 一致）
         orphans = [
-            t for t in asyncio.all_tasks()
+            t
+            for t in asyncio.all_tasks()
             if (t.get_name() or "").startswith("codex-alert-") and not t.done()
         ]
         assert orphans == []
-        assert plugin._task is not None and not plugin._task.done()  # watcher 已按新配置重启
+        assert (
+            plugin._task is not None and not plugin._task.done()
+        )  # watcher 已按新配置重启
 
     asyncio.run(asyncio.wait_for(scenario(), 5))
     receipt = set(_gstate(plugin)["upstream_alert_keys"])
-    assert "upstream-alert:signal:2097043464538264003:likely" not in receipt  # A 被取消：无 receipt
+    assert (
+        "upstream-alert:signal:2097043464538264003:likely" not in receipt
+    )  # A 被取消：无 receipt
     assert "upstream-alert:signal:2097043464538264003:strong" in receipt  # B 正常完成
     assert plugin._inflight == {}
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
@@ -3532,15 +3831,19 @@ def test_config_update_race_no_orphan_alert_task(tmp_path):
 # event/tweet JSON）。判别字段纯结构化：observation_result / source /
 # observed_at + per-group upstream_alert_keys。
 
+
 def _confirmation_feed() -> dict:
     """09-08 两条真实 L1 的 event+tweet（真实落地后归档形态）。"""
     data = json.loads(
-        (Path(__file__).resolve().parent / "live/forensic_0908/replay/corpus/confirmation_cycle_landed.json")
-        .read_text(encoding="utf-8")
+        (
+            Path(__file__).resolve().parent
+            / "live/forensic_0908/replay/corpus/confirmation_cycle_landed.json"
+        ).read_text(encoding="utf-8")
     )
     events = [v["event"] for v in data.values()]
     tweets = [v["tweet"] for v in data.values() if v.get("tweet")]
     return {"events": events, "tweets": tweets}
+
 
 L4_RECEIPTS = [
     "upstream-alert:signal:2097043464538264003:likely",
@@ -3565,7 +3868,9 @@ def test_golden_0908_l1_1_observed_becomes_short_confirm(tmp_path):
     feed = _confirmation_feed()
     asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING))  # noqa: SLF001
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
-    assert bodies == ["✅ Codex 额度重置已确认生效" + N1 + "确认时间：北京时间 9月8日 09:34"]
+    assert bodies == [
+        "✅ Codex 额度重置已确认生效" + N1 + "确认时间：北京时间 9月8日 09:34"
+    ]
     assert calls["fx"] == [] and calls["vx"] == []  # 零 Provider
     assert plugin._ctx.llm.generate_calls == []  # 零 LLM
     assert "global-declared:2097043464538264003" in _gstate(plugin)["notified_keys"]
@@ -3593,7 +3898,9 @@ def test_golden_0908_l1_2_confirmation_late_archive_is_silenced(tmp_path):
     assert plugin._ctx.send.sent_messages == []  # 0 QQ
     assert calls["fx"] == [] and calls["vx"] == []  # 0 Provider
     assert plugin._ctx.llm.generate_calls == []  # 0 LLM
-    assert "global-declared:2097174560412246215" in _gstate(plugin)["notified_keys"]  # handled key
+    assert (
+        "global-declared:2097174560412246215" in _gstate(plugin)["notified_keys"]
+    )  # handled key
 
 
 @pytest.mark.usefixtures("_confirmation_fixed_clock")
@@ -3602,7 +3909,9 @@ def test_mixed_groups_same_event_four_quadrant(tmp_path):
     群 A（已有 L4 receipt）→ B-confirm / C-silence；群 B（无 receipt）→
     A-primary（Content+LLM）。一个群的 receipt 不影响另一个群。"""
     plugin = _make_plugin(
-        tmp_path, group_id="", group_ids=["100000001", "100000002"],
+        tmp_path,
+        group_id="",
+        group_ids=["100000001", "100000002"],
         llm_overrides={"enabled": True},
     )
     # 群 A 已有两条 L4 receipt（keys + 结构化 tweet receipt）；群 B 没有
@@ -3616,12 +3925,28 @@ def test_mixed_groups_same_event_four_quadrant(tmp_path):
     _gstate(plugin, "100000002")["notified_keys"] = []
     good = {"translation_zh": "完整中文翻译"}
 
-    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, rpc_timeout_ms=None, **kwargs):
-        return {"success": True, "response": json.dumps(good, ensure_ascii=False), "model_name": "m1", "total_tokens": 1}
+    async def fake_llm(
+        prompt,
+        model="",
+        temperature=None,
+        max_tokens=None,
+        rpc_timeout_ms=None,
+        **kwargs,
+    ):
+        return {
+            "success": True,
+            "response": json.dumps(good, ensure_ascii=False),
+            "model_name": "m1",
+            "total_tokens": 1,
+        }
 
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
     _wire_providers(plugin, fx=_FX_GOLDEN)
-    asyncio.run(plugin._process_feed_signals(_confirmation_feed(), ["100000001", "100000002"], BEIJING))  # noqa: SLF001
+    asyncio.run(
+        plugin._process_feed_signals(
+            _confirmation_feed(), ["100000001", "100000002"], BEIJING
+        )
+    )  # noqa: SLF001
     by_group: dict[str, list[str]] = {}
     for stream, body in plugin._ctx.send.sent_messages:
         by_group.setdefault(stream, []).append(body)
@@ -3669,21 +3994,27 @@ def test_confirmation_primary_uses_provider_full_text(tmp_path):
     assert "Tibo 原文：" in bodies[0] and "Lands around 6pm PST today" in bodies[0]
     assert "Tibo 原文摘录" not in bodies[0]
     assert "已宣告" not in bodies[0]
-    assert f"原帖：https://x.com/thsottiaux/status/2097043464538264003" in bodies[0]
+    assert "原帖：https://x.com/thsottiaux/status/2097043464538264003" in bodies[0]
 
 
 def test_confirmation_short_message_omits_unparseable_observed_at(tmp_path):
     """observed_at 不可解析 → 省略时间行（只用可靠 observed_at）。"""
     from plugin import build_confirm_effective_message
-    assert build_confirm_effective_message("not-a-date") == "✅ Codex 额度重置已确认生效"
+
+    assert (
+        build_confirm_effective_message("not-a-date") == "✅ Codex 额度重置已确认生效"
+    )
     assert build_confirm_effective_message(None) == "✅ Codex 额度重置已确认生效"
 
 
 # ===== v0.1.9 修正轮：同轮 defer / 接管 / duplicate 指纹负例 =====
 
+
 def _event1_only_feed() -> dict:
     feed = _confirmation_feed()
-    feed["events"] = [e for e in feed["events"] if str(e["id"]) == "2097043464538264003"]
+    feed["events"] = [
+        e for e in feed["events"] if str(e["id"]) == "2097043464538264003"
+    ]
     return feed
 
 
@@ -3691,7 +4022,9 @@ def _event1_only_feed() -> dict:
 def test_same_round_l4_l1_defers_then_receipt_confirms(tmp_path):
     """同轮 same-tweet Feed+Forecast：L4 先行调度，L1 defer 不发送；
     receipt 落地后下一轮 → B-confirm 短确认。"""
-    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
+    plugin = _llm_plugin(
+        tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False}
+    )
     _gstate(plugin)["feed_baseline_done"] = True  # 模拟已在运行的系统
     calls = _wire_providers(plugin, fx=_FX_GOLDEN)
     forecast = {"official_signal": _osig()}  # same tweet
@@ -3716,9 +4049,11 @@ def test_same_round_l4_l1_defers_then_receipt_confirms(tmp_path):
 def test_defer_released_when_forecast_clears(tmp_path):
     """defer 后上游清除 official_signal 且仍无 receipt → L1 保守接管
     A-primary（完整通知），不会永久 defer。"""
-    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
+    plugin = _llm_plugin(
+        tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False}
+    )
     _gstate(plugin)["feed_baseline_done"] = True  # 模拟已在运行的系统
-    calls = _wire_providers(plugin, fx=None, vx=None)  # providers 全挂 → forecast 摘录兜底
+    _wire_providers(plugin, fx=None, vx=None)  # providers 全挂 → forecast 摘录兜底
     feed = _event1_only_feed()
     forecast = {"official_signal": _osig()}
     asyncio.run(plugin._process_feed_signals(feed, ["100000001"], BEIJING, forecast))  # noqa: SLF001
@@ -3739,7 +4074,9 @@ def test_per_group_defer_with_existing_receipt(tmp_path):
     """per-group defer：群 A 已有 L4 receipt（confirmation → C-silence），
     群 B 无 receipt → defer；osig 清除后 B 接管 A-primary；A 不重复。"""
     plugin = _llm_plugin(
-        tmp_path, group_id="", group_ids=["100000001", "100000002"],
+        tmp_path,
+        group_id="",
+        group_ids=["100000001", "100000002"],
         llm_overrides={"enabled": False},
     )
     _gstate(plugin, "100000001")["upstream_alert_keys"] = [
@@ -3749,19 +4086,43 @@ def test_per_group_defer_with_existing_receipt(tmp_path):
     _gstate(plugin, "100000001")["feed_baseline_done"] = True
     _gstate(plugin, "100000002")["feed_baseline_done"] = True
     _wire_providers(plugin, fx=_FX_GOLDEN)
-    feed = {"events": [e for e in _confirmation_feed()["events"] if str(e["id"]) == "2097174560412246215"]}
-    feed["tweets"] = [t for t in _confirmation_feed()["tweets"] if str(t["id"]) == "2097174560412246215"]
-    forecast = {"official_signal": _osig( tweet_id="2097174560412246215", alert_event_id="signal:2097174560412246215:likely")}
-    asyncio.run(plugin._process_feed_signals(feed, ["100000001", "100000002"], BEIJING, forecast))  # noqa: SLF001
+    feed = {
+        "events": [
+            e
+            for e in _confirmation_feed()["events"]
+            if str(e["id"]) == "2097174560412246215"
+        ]
+    }
+    feed["tweets"] = [
+        t
+        for t in _confirmation_feed()["tweets"]
+        if str(t["id"]) == "2097174560412246215"
+    ]
+    forecast = {
+        "official_signal": _osig(
+            tweet_id="2097174560412246215",
+            alert_event_id="signal:2097174560412246215:likely",
+        )
+    }
+    asyncio.run(
+        plugin._process_feed_signals(
+            feed, ["100000001", "100000002"], BEIJING, forecast
+        )
+    )  # noqa: SLF001
     by_group: dict[str, list[str]] = {}
     for stream, body in plugin._ctx.send.sent_messages:
         by_group.setdefault(stream, []).append(body)
     assert "qq-group-100000001" not in by_group  # A：C-silence
     assert "qq-group-100000002" not in by_group  # B：defer（osig 同 tweet 在）
-    assert "global-declared:2097174560412246215" in _gstate(plugin, "100000001")["notified_keys"]
+    assert (
+        "global-declared:2097174560412246215"
+        in _gstate(plugin, "100000001")["notified_keys"]
+    )
     assert _gstate(plugin, "100000002").get("notified_keys", []) == []  # defer 不写 key
     # osig 清除 → B 接管 A-primary；A 已 handled 不重复
-    asyncio.run(plugin._process_feed_signals(feed, ["100000001", "100000002"], BEIJING, None))  # noqa: SLF001
+    asyncio.run(
+        plugin._process_feed_signals(feed, ["100000001", "100000002"], BEIJING, None)
+    )  # noqa: SLF001
     by_group2: dict[str, list[str]] = {}
     for stream, body in plugin._ctx.send.sent_messages:
         by_group2.setdefault(stream, []).append(body)
@@ -3774,22 +4135,54 @@ def test_duplicate_fingerprint_missing_field_takes_over(tmp_path):
     """spec 7：duplicate 指纹任一字段缺失/不一致 → 不得 C-silence，
     A-primary 照常发送（防 schema 漂移造成静默漏报）。"""
     base_event = next(
-        e for e in _confirmation_feed()["events"]
+        e
+        for e in _confirmation_feed()["events"]
         if str(e["id"]) == "2097174560412246215"
     )
     base_tweet = next(
-        t for t in _confirmation_feed()["tweets"]
+        t
+        for t in _confirmation_feed()["tweets"]
         if str(t["id"]) == "2097174560412246215"
     )
     # (变体, 期望 observed)：source=operator-observed → observed=True →
     # 确认型 primary 文案；其余变体 observed=False → declaration 形态。
     variants = [
         ({"events": [{**base_event, "source": ""}], "tweets": [base_tweet]}, False),
-        ({"events": [{**base_event, "source": "operator-observed"}], "tweets": [base_tweet]}, True),
-        ({"events": [base_event], "tweets": [{**base_tweet, "explicit_reset_claim": False}]}, False),
-        ({"events": [base_event], "tweets": [{**base_tweet, "explicit_reset_claim": None}]}, False),
-        ({"events": [base_event], "tweets": [{**base_tweet, "at": "2026-09-08T04:05:54.000Z"}]}, False),
-        ({"events": [base_event], "tweets": [{k: v for k, v in base_tweet.items() if k != "at"}]}, False),
+        (
+            {
+                "events": [{**base_event, "source": "operator-observed"}],
+                "tweets": [base_tweet],
+            },
+            True,
+        ),
+        (
+            {
+                "events": [base_event],
+                "tweets": [{**base_tweet, "explicit_reset_claim": False}],
+            },
+            False,
+        ),
+        (
+            {
+                "events": [base_event],
+                "tweets": [{**base_tweet, "explicit_reset_claim": None}],
+            },
+            False,
+        ),
+        (
+            {
+                "events": [base_event],
+                "tweets": [{**base_tweet, "at": "2026-09-08T04:05:54.000Z"}],
+            },
+            False,
+        ),
+        (
+            {
+                "events": [base_event],
+                "tweets": [{k: v for k, v in base_tweet.items() if k != "at"}],
+            },
+            False,
+        ),
     ]
     for i, (variant, expected_observed) in enumerate(variants):
         plugin = _make_plugin(tmp_path / f"case{i}")
@@ -3827,7 +4220,9 @@ def test_duplicate_fingerprint_missing_field_takes_over(tmp_path):
 def test_defer_contract_gating_invalid_delivery(tmp_path):
     """delivery != alerts → contract 不成立 → 不 defer，保守 A-primary。
     event1 是 observed → 确认型 primary（非 declaration）。"""
-    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
+    plugin = _llm_plugin(
+        tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False}
+    )
     _wire_providers(plugin, fx=None, vx=None)
     _gstate(plugin)["feed_baseline_done"] = True  # 跳过 baseline，直达 dispatch
     forecast = {"official_signal": {**_osig(), "delivery_destination": "web"}}
@@ -3841,7 +4236,9 @@ def test_defer_contract_gating_invalid_delivery(tmp_path):
 @pytest.mark.usefixtures("_confirmation_fixed_clock")
 def test_defer_contract_gating_missing_alert_event_id(tmp_path):
     """alert_event_id 非空字符串要求不满足 → contract 不成立 → 不 defer。"""
-    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
+    plugin = _llm_plugin(
+        tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False}
+    )
     _wire_providers(plugin, fx=None, vx=None)
     _gstate(plugin)["feed_baseline_done"] = True  # 跳过 baseline，直达 dispatch
     forecast = {"official_signal": {**_osig(), "alert_event_id": ""}}
@@ -3855,7 +4252,9 @@ def test_defer_contract_gating_missing_alert_event_id(tmp_path):
 @pytest.mark.usefixtures("_confirmation_fixed_clock")
 def test_defer_contract_gating_valid_contract_defers(tmp_path):
     """正向对照：三项契约成立 → defer（不发不写）。"""
-    plugin = _llm_plugin(tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False})
+    plugin = _llm_plugin(
+        tmp_path, group_ids=["100000001"], llm_overrides={"enabled": False}
+    )
     _wire_providers(plugin, fx=None, vx=None)
     _gstate(plugin)["feed_baseline_done"] = True  # 跳过 baseline，直达 dispatch
     forecast = {"official_signal": _osig()}  # promise/likely/alerts 全齐
@@ -3866,14 +4265,23 @@ def test_defer_contract_gating_valid_contract_defers(tmp_path):
 
 
 @pytest.mark.parametrize("event_id", ["2097043464538264003", "2097174560412246215"])
-@pytest.mark.parametrize("mixed_groups", [False, True], ids=["single-group", "mixed-groups"])
-def test_l1_midflight_receipt_reclassifies_before_send(tmp_path, event_id, mixed_groups):
+@pytest.mark.parametrize(
+    "mixed_groups", [False, True], ids=["single-group", "mixed-groups"]
+)
+def test_l1_midflight_receipt_reclassifies_before_send(
+    tmp_path, event_id, mixed_groups
+):
     """Provider 确认挂起后注入 receipt：observed → B，duplicate → C；未注入群保持 A。"""
     groups = ["100000001", "100000002"] if mixed_groups else ["100000001"]
     plugin = _llm_plugin(
-        tmp_path, group_id="", group_ids=groups, llm_overrides={"enabled": False},
+        tmp_path,
+        group_id="",
+        group_ids=groups,
+        llm_overrides={"enabled": False},
     )
-    signal = next(s for s in signals_from_feed(_confirmation_feed()) if s.event_id == event_id)
+    signal = next(
+        s for s in signals_from_feed(_confirmation_feed()) if s.event_id == event_id
+    )
 
     async def scenario():
         entered = asyncio.Event()
@@ -3886,12 +4294,16 @@ def test_l1_midflight_receipt_reclassifies_before_send(tmp_path, event_id, mixed
             return _FX_GOLDEN
 
         plugin._get_json = hanging_get
-        task = asyncio.create_task(plugin._l1_primary_pipeline(signal, None, groups, BEIJING))
+        task = asyncio.create_task(
+            plugin._l1_primary_pipeline(signal, None, groups, BEIJING)
+        )
         try:
             await asyncio.wait_for(entered.wait(), 2)
             assert not task.done()
             assert plugin._ctx.send.sent_messages == []
-            assert all(not _gstate(plugin, g).get("upstream_alert_tweet_ids") for g in groups)
+            assert all(
+                not _gstate(plugin, g).get("upstream_alert_tweet_ids") for g in groups
+            )
             async with plugin._state_lock:
                 _gstate(plugin, groups[0])["upstream_alert_tweet_ids"] = [event_id]
                 plugin._save_state()
@@ -3904,10 +4316,18 @@ def test_l1_midflight_receipt_reclassifies_before_send(tmp_path, event_id, mixed
             await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(scenario())
-    by_group = {g: [body for stream, body in plugin._ctx.send.sent_messages
-                    if stream == f"qq-group-{g}"] for g in groups}
+    by_group = {
+        g: [
+            body
+            for stream, body in plugin._ctx.send.sent_messages
+            if stream == f"qq-group-{g}"
+        ]
+        for g in groups
+    }
     if event_id == "2097043464538264003":
-        assert by_group[groups[0]] == [plugin_module.build_confirm_effective_message(signal.observed_at)]
+        assert by_group[groups[0]] == [
+            plugin_module.build_confirm_effective_message(signal.observed_at)
+        ]
     else:
         assert by_group[groups[0]] == []
     if mixed_groups:
@@ -3921,7 +4341,9 @@ def test_l1_midflight_receipt_reclassifies_before_send(tmp_path, event_id, mixed
     assert _gstate(plugin, groups[0])["upstream_alert_tweet_ids"] == [event_id]
 
 
-@pytest.mark.parametrize("late_tweet_id", [False, True], ids=["upgrade-existing-key", "late-tweet-id"])
+@pytest.mark.parametrize(
+    "late_tweet_id", [False, True], ids=["upgrade-existing-key", "late-tweet-id"]
+)
 def test_l4_backfill_persists_silently_and_is_idempotent(tmp_path, late_tweet_id):
     """已有 alert key 的升级与同 alert 后补 tweet_id，均静默持久化且不重复写盘。"""
     plugin = _llm_plugin(tmp_path, llm_overrides={"enabled": True})
@@ -3935,16 +4357,24 @@ def test_l4_backfill_persists_silently_and_is_idempotent(tmp_path, late_tweet_id
 
     async def scenario():
         if late_tweet_id:
-            await plugin._process_upstream_alert({"official_signal": {**osig, "tweet_id": None}}, ["100000001"])
+            await plugin._process_upstream_alert(
+                {"official_signal": {**osig, "tweet_id": None}}, ["100000001"]
+            )
             assert plugin._state_path().read_bytes() == before
             assert _gstate(plugin)["upstream_alert_tweet_ids"] == ["older-receipt"]
         await plugin._process_upstream_alert({"official_signal": osig}, ["100000001"])
-        assert _gstate(plugin)["upstream_alert_tweet_ids"] == sorted(["older-receipt", osig["tweet_id"]])
+        assert _gstate(plugin)["upstream_alert_tweet_ids"] == sorted(
+            ["older-receipt", osig["tweet_id"]]
+        )
         plugin._load_state()
-        assert _gstate(plugin)["upstream_alert_tweet_ids"] == sorted(["older-receipt", osig["tweet_id"]])
+        assert _gstate(plugin)["upstream_alert_tweet_ids"] == sorted(
+            ["older-receipt", osig["tweet_id"]]
+        )
         saved = plugin._state_path().read_bytes()
+
         def unexpected_save():
             pytest.fail("idempotent backfill must not write state again")
+
         plugin._save_state = unexpected_save
         await plugin._process_upstream_alert({"official_signal": osig}, ["100000001"])
         assert plugin._state_path().read_bytes() == saved
@@ -3957,18 +4387,30 @@ def test_l4_backfill_persists_silently_and_is_idempotent(tmp_path, late_tweet_id
     assert _gstate(plugin)["upstream_alert_keys"] == [key]
 
 
-@pytest.mark.parametrize("override", [
-    {"tweet_id": None}, {"tweet_id": ""},
-    {"delivery_destination": "web"}, {"alert_event_id": ""},
-], ids=["no-tweet-id", "empty-tweet-id", "invalid-delivery", "no-alert-id"])
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"tweet_id": None},
+        {"tweet_id": ""},
+        {"delivery_destination": "web"},
+        {"alert_event_id": ""},
+    ],
+    ids=["no-tweet-id", "empty-tweet-id", "invalid-delivery", "no-alert-id"],
+)
 def test_l4_backfill_requires_explicit_tweet_id_and_valid_contract(tmp_path, override):
     """不从 alert ID 猜 tweet ID；无效契约不补写 receipt。"""
     plugin = _llm_plugin(tmp_path)
     calls = _wire_providers(plugin, fx=_FX_GOLDEN)
-    _gstate(plugin)["upstream_alert_keys"] = [f"upstream-alert:{_osig()['alert_event_id']}"]
+    _gstate(plugin)["upstream_alert_keys"] = [
+        f"upstream-alert:{_osig()['alert_event_id']}"
+    ]
     plugin._save_state()
     before = plugin._state_path().read_bytes()
-    asyncio.run(plugin._process_upstream_alert({"official_signal": _osig(**override)}, ["100000001"]))
+    asyncio.run(
+        plugin._process_upstream_alert(
+            {"official_signal": _osig(**override)}, ["100000001"]
+        )
+    )
     assert not _gstate(plugin).get("upstream_alert_tweet_ids")
     assert plugin._state_path().read_bytes() == before
     assert plugin._ctx.send.sent_messages == []
@@ -4019,7 +4461,9 @@ def test_banked_signal_joins_tweet_at_for_published_at():
     signal = next(s for s in signals_from_feed(feed) if s.lane == "banked")
     assert signal.tweet_at == feed["tweets"][0]["at"]
     declared = next(
-        s for s in signals_from_feed(_confirmation_feed()) if s.lane == "global_declared"
+        s
+        for s in signals_from_feed(_confirmation_feed())
+        if s.lane == "global_declared"
     )
     assert declared.tweet_at  # declared 车道原有行为不变
 
@@ -4033,7 +4477,12 @@ def test_banked_pipeline_full_text_and_translation(tmp_path):
     good = {"translation_zh": "Banked reset 已落地，可按需兑换。"}
 
     async def fake_llm(prompt, model="", temperature=None, max_tokens=None, **kwargs):
-        return {"success": True, "response": json.dumps(good, ensure_ascii=False), "model_name": "m1", "total_tokens": 10}
+        return {
+            "success": True,
+            "response": json.dumps(good, ensure_ascii=False),
+            "model_name": "m1",
+            "total_tokens": 10,
+        }
 
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
     calls = _wire_providers(plugin, fx=_FX_GOLDEN)
@@ -4066,7 +4515,12 @@ def test_banked_pipeline_passes_published_at_to_llm(tmp_path):
 
     async def fake_llm(prompt, model="", temperature=None, max_tokens=None, **kwargs):
         captured["messages"] = prompt
-        return {"success": True, "response": json.dumps({"translation_zh": "译"}, ensure_ascii=False), "model_name": "m1", "total_tokens": 1}
+        return {
+            "success": True,
+            "response": json.dumps({"translation_zh": "译"}, ensure_ascii=False),
+            "model_name": "m1",
+            "total_tokens": 1,
+        }
 
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
     _wire_providers(plugin, fx=_FX_GOLDEN)
@@ -4124,7 +4578,8 @@ def test_banked_all_text_sources_missing_still_sends(tmp_path):
     asyncio.run(run_and_drain())
     bodies = [b for _, b in plugin._ctx.send.sent_messages]
     assert bodies == [
-        BANKED_NOTICE_TITLE + "\n\n原帖：https://x.com/thsottiaux/status/999909111111111111"
+        BANKED_NOTICE_TITLE
+        + "\n\n原帖：https://x.com/thsottiaux/status/999909111111111111"
     ]
     assert "banked:999909111111111111:announced" in _gstate(plugin)["notified_keys"]
 
@@ -4137,7 +4592,12 @@ def test_banked_multi_group_shared_enrichment(tmp_path):
     good = {"translation_zh": "共享翻译"}
 
     async def fake_llm(prompt, model="", temperature=None, max_tokens=None, **kwargs):
-        return {"success": True, "response": json.dumps(good, ensure_ascii=False), "model_name": "m1", "total_tokens": 1}
+        return {
+            "success": True,
+            "response": json.dumps(good, ensure_ascii=False),
+            "model_name": "m1",
+            "total_tokens": 1,
+        }
 
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
     calls = _wire_providers(plugin, fx=_FX_GOLDEN)
@@ -4153,7 +4613,10 @@ def test_banked_multi_group_shared_enrichment(tmp_path):
     assert "中文翻译：\n共享翻译" in bodies[0]
     assert len(calls["fx"]) == 1 and calls["vx"] == []
     for gid in ("100000001", "100000002"):
-        assert "banked:999909111111111111:announced" in _gstate(plugin, gid)["notified_keys"]
+        assert (
+            "banked:999909111111111111:announced"
+            in _gstate(plugin, gid)["notified_keys"]
+        )
 
 
 def test_banked_send_failure_retries_only_failed_group(tmp_path):
@@ -4190,8 +4653,14 @@ def test_banked_send_failure_retries_only_failed_group(tmp_path):
     asyncio.run(round_and_drain())
     assert sent == ["100000001", "100000002"]
     assert fx_rounds["n"] == 2  # 重试允许再次 fetch（与 L4 一致）
-    assert "banked:999909111111111111:announced" in _gstate(plugin, "100000001")["notified_keys"]
-    assert "banked:999909111111111111:announced" in _gstate(plugin, "100000002")["notified_keys"]
+    assert (
+        "banked:999909111111111111:announced"
+        in _gstate(plugin, "100000001")["notified_keys"]
+    )
+    assert (
+        "banked:999909111111111111:announced"
+        in _gstate(plugin, "100000002")["notified_keys"]
+    )
 
 
 def test_banked_inflight_dedup_single_pipeline(tmp_path):
@@ -4217,7 +4686,9 @@ def test_banked_inflight_dedup_single_pipeline(tmp_path):
         assert list(plugin._inflight.keys()) == [
             "banked-primary:banked:999909111111111111:announced"
         ]
-        await plugin._process_feed_signals(feed, ["100000001"], BEIJING)  # inflight 命中
+        await plugin._process_feed_signals(
+            feed, ["100000001"], BEIJING
+        )  # inflight 命中
         assert fx_calls["n"] == 0  # 未重复启动管线
         release.set()
         await _drain_inflight(plugin)
@@ -4323,12 +4794,24 @@ def test_model_task_no_dynamic_host_enumeration(tmp_path):
     plugin.ctx.llm.get_available_models = counting_models  # type: ignore[method-assign]
     asyncio.run(plugin.on_load())
     asyncio.run(plugin.on_config_update("model", {}, "1"))  # noqa: SLF001
-    asyncio.run(plugin.on_config_update("self", {
-        "plugin": {"enabled": True, "config_version": "1.2.0"},
-        "watcher": {"group_ids": ["100000001"], "group_ids_migrated": True},
-        "llm": {"enabled": True, "model_task": "planner", "temperature": 0.2,
-                "max_tokens": 4096, "timeout_seconds": 600, "prompt": "p"},
-    }, "1"))
+    asyncio.run(
+        plugin.on_config_update(
+            "self",
+            {
+                "plugin": {"enabled": True, "config_version": "1.2.0"},
+                "watcher": {"group_ids": ["100000001"], "group_ids_migrated": True},
+                "llm": {
+                    "enabled": True,
+                    "model_task": "planner",
+                    "temperature": 0.2,
+                    "max_tokens": 4096,
+                    "timeout_seconds": 600,
+                    "prompt": "p",
+                },
+            },
+            "1",
+        )
+    )
     assert calls["n"] == 0  # 任何路径都不再动态枚举
     # 配置热更新正常生效（model_task 经 set_plugin_config 更新）
     assert plugin.config.llm.model_task == "planner"
@@ -4343,14 +4826,28 @@ def test_llm_generate_still_uses_configured_model_task(tmp_path):
     _wire_providers(plugin, fx=_FX_GOLDEN)
     captured: dict = {}
 
-    async def fake_llm(prompt, model="", temperature=None, max_tokens=None, rpc_timeout_ms=None, **kwargs):
+    async def fake_llm(
+        prompt,
+        model="",
+        temperature=None,
+        max_tokens=None,
+        rpc_timeout_ms=None,
+        **kwargs,
+    ):
         captured["model"] = model
-        return {"success": True, "response": json.dumps({"translation_zh": "译"}, ensure_ascii=False), "model_name": "m1", "total_tokens": 1}
+        return {
+            "success": True,
+            "response": json.dumps({"translation_zh": "译"}, ensure_ascii=False),
+            "model_name": "m1",
+            "total_tokens": 1,
+        }
 
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
     asyncio.run(
         plugin._process_upstream_alert(
-            {"official_signal": _osig()}, ["100000001"], None  # noqa: SLF001
+            {"official_signal": _osig()},
+            ["100000001"],
+            None,  # noqa: SLF001
         )
     )
     assert captured["model"] == "my-custom-task"  # 配置值显式传递
@@ -4552,8 +5049,7 @@ def test_push_banked_minimal_object_sends_title_and_source_page(tmp_path):
     assert plugin._ctx.send.sent_messages == [
         (
             "qq-group-100000001",
-            BANKED_NOTICE_TITLE
-            + "\n\n来源：https://codex-reset.com/banked-reset",
+            BANKED_NOTICE_TITLE + "\n\n来源：https://codex-reset.com/banked-reset",
         )
     ]
     assert plugin._ctx.llm.generate_calls == []
@@ -4569,9 +5065,7 @@ def test_push_banked_body_not_shown_when_providers_fail(tmp_path):
     feed["tweets"] = []  # 无同 id 推文 → 无任何合法正文来源
 
     async def run_and_drain():
-        await plugin._process_push_banked(
-            _golden_push(), ["100000001"], feed
-        )  # noqa: SLF001
+        await plugin._process_push_banked(_golden_push(), ["100000001"], feed)  # noqa: SLF001
         await _drain_inflight(plugin)
 
     asyncio.run(run_and_drain())
@@ -4603,9 +5097,7 @@ def test_push_banked_feed_text_used_as_honest_fallback(tmp_path):
     plugin.ctx.llm.generate = fake_llm  # type: ignore[method-assign]
 
     async def run_and_drain():
-        await plugin._process_push_banked(
-            _golden_push(), ["100000001"], _golden_feed()
-        )  # noqa: SLF001
+        await plugin._process_push_banked(_golden_push(), ["100000001"], _golden_feed())  # noqa: SLF001
         await _drain_inflight(plugin)
 
     asyncio.run(run_and_drain())
@@ -4665,7 +5157,10 @@ def test_push_banked_dedup_and_inflight_single_registration(tmp_path):
 def test_push_banked_send_failure_retries_only_failed_group(tmp_path):
     """A 成 / B 败 → 仅 A 落 receipt；下一轮仅 B 重试，A 零重复。"""
     plugin = _llm_plugin(
-        tmp_path, llm_overrides={"enabled": False}, group_id="", group_ids=["100000001", "100000002"]
+        tmp_path,
+        llm_overrides={"enabled": False},
+        group_id="",
+        group_ids=["100000001", "100000002"],
     )
     _wire_v0112(plugin, fx=_FX_GOLDEN)
     sends: dict[str, int] = {}
@@ -4680,9 +5175,7 @@ def test_push_banked_send_failure_retries_only_failed_group(tmp_path):
     plugin._send_group_text = flaky_send  # type: ignore[method-assign]
 
     async def run_round():
-        await plugin._process_push_banked(
-            _golden_push(), ["100000001", "100000002"]
-        )  # noqa: SLF001
+        await plugin._process_push_banked(_golden_push(), ["100000001", "100000002"])  # noqa: SLF001
         await _drain_inflight(plugin)
 
     asyncio.run(run_round())
@@ -4703,14 +5196,15 @@ def test_push_banked_group_removed_midflight_skipped(tmp_path):
     """管线等待期间群被移出配置：跳过且不重建其 receipt（stale-group
     竞态防护与 L4/banked 管线一致）。"""
     plugin = _llm_plugin(
-        tmp_path, llm_overrides={"enabled": False}, group_id="", group_ids=["100000001", "100000002"]
+        tmp_path,
+        llm_overrides={"enabled": False},
+        group_id="",
+        group_ids=["100000001", "100000002"],
     )
     _wire_v0112(plugin, fx=_FX_GOLDEN)
 
     async def scenario():
-        await plugin._process_push_banked(
-            _golden_push(), ["100000001", "100000002"]
-        )  # noqa: SLF001
+        await plugin._process_push_banked(_golden_push(), ["100000001", "100000002"])  # noqa: SLF001
         plugin.config.watcher.group_ids = ["100000001"]  # 管线启动后、发送前移除
         await _drain_inflight(plugin)
 

@@ -7,6 +7,7 @@
 运行：本脚本需 maibot_sdk 可导入（与 test_watcher.py 相同要求），例如：
     PYTHONPATH="<repo>/test_env;<repo>" python simulate_confirmation_policy.py
 """
+
 from __future__ import annotations
 
 import json
@@ -32,8 +33,12 @@ def iso(value: str) -> datetime:
 
 def main() -> None:
     feed = json.loads((CORPUS / "feed_landed.json").read_text(encoding="utf-8"))
-    events = {str(e.get("id")): e for e in feed.get("events", []) if isinstance(e, dict)}
-    tweets = {str(t.get("id")): t for t in feed.get("tweets", []) if isinstance(t, dict)}
+    events = {
+        str(e.get("id")): e for e in feed.get("events", []) if isinstance(e, dict)
+    }
+    tweets = {
+        str(t.get("id")): t for t in feed.get("tweets", []) if isinstance(t, dict)
+    }
 
     # 时间线：(UTC 时刻, 类型, tweet_id, lifecycle)
     # - L4 时刻 = 该 alert 实际观测/投递时刻（Wayback 快照 / 生产日志 / TG 记录）
@@ -58,7 +63,7 @@ def main() -> None:
     ]
     timeline.sort(key=lambda x: iso(x[0]))
 
-    l4_receipt_tweets: dict[str, str] = {}           # tweet_id -> 首次 receipt 时刻
+    l4_receipt_tweets: dict[str, str] = {}  # tweet_id -> 首次 receipt 时刻
     notified_lifecycles_report: dict[str, int] = {}  # 仅报告分组，不参与判定
     counts: dict[str, int] = {}
     print("== v0.1.9 Historical Replay（生产 classify_declared_signal）==\n")
@@ -79,8 +84,12 @@ def main() -> None:
         duplicate = is_duplicate_live_confirmation(
             source=event.get("source"),
             explicit_reset_claim=tweets.get(tweet_id, {}).get("explicit_reset_claim"),
-            announced_at=iso(event["announced_at"]) if event.get("announced_at") else None,
-            tweet_at=iso(tweets[tweet_id]["at"]) if tweet_id in tweets and tweets[tweet_id].get("at") else None,
+            announced_at=iso(event["announced_at"])
+            if event.get("announced_at")
+            else None,
+            tweet_at=iso(tweets[tweet_id]["at"])
+            if tweet_id in tweets and tweets[tweet_id].get("at")
+            else None,
             l4_already=l4_already,
         )
         decision = classify_declared_signal(

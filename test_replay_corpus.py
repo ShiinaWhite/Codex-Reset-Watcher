@@ -49,9 +49,12 @@ def test_lc7_confirmation_tweet_duplicate_fingerprint_c_silence():
         l4_already=True,
     )
     assert duplicate is True
-    assert classify_declared_signal(
-        observed=False, l4_already=True, duplicate_confirmation=duplicate
-    ) == "C_SILENCE"
+    assert (
+        classify_declared_signal(
+            observed=False, l4_already=True, duplicate_confirmation=duplicate
+        )
+        == "C_SILENCE"
+    )
 
 
 def test_lc7_promise_flip_observed_b_confirm():
@@ -60,12 +63,20 @@ def test_lc7_promise_flip_observed_b_confirm():
     assert event.get("source") == "operator-observed"
     assert event.get("observation_result") == "reset_observed"
     assert event.get("observed_at")
-    assert is_observed_declaration(
-        event.get("observation_result"), event.get("source"), event.get("observed_at")
-    ) is True
-    assert classify_declared_signal(
-        observed=True, l4_already=True, duplicate_confirmation=False
-    ) == "B_CONFIRM"
+    assert (
+        is_observed_declaration(
+            event.get("observation_result"),
+            event.get("source"),
+            event.get("observed_at"),
+        )
+        is True
+    )
+    assert (
+        classify_declared_signal(
+            observed=True, l4_already=True, duplicate_confirmation=False
+        )
+        == "B_CONFIRM"
+    )
 
 
 def test_lc4_declared_event_stays_a_primary():
@@ -83,9 +94,12 @@ def test_lc4_declared_event_stays_a_primary():
         l4_already=False,
     )
     assert duplicate is False
-    assert classify_declared_signal(
-        observed=observed, l4_already=False, duplicate_confirmation=duplicate
-    ) == "A_PRIMARY"
+    assert (
+        classify_declared_signal(
+            observed=observed, l4_already=False, duplicate_confirmation=duplicate
+        )
+        == "A_PRIMARY"
+    )
 
 
 @pytest.mark.parametrize(
@@ -110,9 +124,12 @@ def test_archive_missing_observation_fields_never_c_silence(tweet_id: str):
     )
     assert observed is False
     assert duplicate is False
-    assert classify_declared_signal(
-        observed=False, l4_already=True, duplicate_confirmation=duplicate
-    ) == "A_PRIMARY"
+    assert (
+        classify_declared_signal(
+            observed=False, l4_already=True, duplicate_confirmation=duplicate
+        )
+        == "A_PRIMARY"
+    )
 
 
 def test_lc2_event_rolled_out_archive_reply_fail_closed():
@@ -122,13 +139,19 @@ def test_lc2_event_rolled_out_archive_reply_fail_closed():
     assert event.get("announcement_state") == "announced"
     assert event.get("is_reply") is None
     signals = signals_from_feed(_landed())
-    assert all(s.event_id != "2091688655828246890" for s in signals if s.lane == "global_declared")
+    assert all(
+        s.event_id != "2091688655828246890"
+        for s in signals
+        if s.lane == "global_declared"
+    )
 
 
 def test_sep5_false_positive_produces_no_declared_signal():
     """Sep-5 内部误报：reply 推文不产生 declared 信号（生产规则静默）。"""
     feed = json.loads(
-        (Path(__file__).resolve().parent / "live/feed_0905.json").read_text(encoding="utf-8")
+        (Path(__file__).resolve().parent / "live/feed_0905.json").read_text(
+            encoding="utf-8"
+        )
     )
     signals = signals_from_feed(feed)
     declared_ids = {s.event_id for s in signals if s.lane == "global_declared"}
