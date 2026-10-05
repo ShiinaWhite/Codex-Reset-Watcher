@@ -24,12 +24,16 @@ def test_real_local_screenshot_and_layout(tmp_path, kind):
         "Tibo 动态" if kind != "system" else "Codex Banked Reset 提醒",
         "English first paragraph.\n\nEnglish second paragraph.",
         "中文第一段。\n\n中文第二段。",
+        url="https://codex-reset.com/banked-reset"
+        if kind == "system"
+        else "https://x.com/thsottiaux/status/123",
         tweet=kind != "system",
     )
     if kind == "quote":
         card.quote = {
             "text": "Quoted English",
             "author": {"name": "Other", "screen_name": "other"},
+            "url": "https://x.com/other/status/456",
         }
         card.quote_translation = "引用中文"
     if kind == "long":
@@ -64,6 +68,11 @@ def test_real_local_screenshot_and_layout(tmp_path, kind):
                     SimpleNamespace(render=BrowserRender()), card, now
                 )
                 assert image and base64.b64decode(image).startswith(b"\x89PNG")
+                assert await page.locator(".source").count() == 0
+                visible = await page.locator("#capture").inner_text()
+                assert card.url not in visible
+                if card.quote:
+                    assert card.quote["url"] not in visible
                 assert await page.locator(".quote").count() == int(kind == "quote")
                 assert await page.locator(".timezone").inner_text() == "UTC+8"
                 assert await page.locator("time").inner_text() == "2026-10-05 04:33"

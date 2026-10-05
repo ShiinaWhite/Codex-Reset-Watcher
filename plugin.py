@@ -489,7 +489,7 @@ class WatcherConfig(PluginConfigBase):
     )
     tibo_full_push: bool = Field(
         default=False,
-        description="推送 Tibo 主动发布的普通帖、长帖和带评论的引用帖；不推送回复或纯转发。",
+        description="推送 Tibo 主动发布的普通帖、长帖、带评论的引用帖和明确回复自己的续帖；不推送回复他人或纯转发。",
         json_schema_extra={
             "label": "Tibo 动态全推送",
             "hint": "首次开启按群静默建立历史基线；已有告警只在本群动态投递成功后被吸收",
@@ -602,23 +602,35 @@ def _feed_item(feed: Any, collection: str, event_id: str) -> dict[str, Any]:
 
 
 def is_tibo_main_post(tweet: Any) -> bool:
-    """Use timeline metadata; unknown reply status is not a proven main post."""
-    if not isinstance(tweet, dict) or tweet.get("is_reply") is not False:
+    """Allow explicit self-replies; replies to others/unknown targets stay out."""
+    if not isinstance(tweet, dict):
         return False
-    if any(
+    references = tweet.get("referenced_tweets") or []
+    replied_to = isinstance(references, list) and any(
+        isinstance(ref, dict) and ref.get("type") == "replied_to" for ref in references
+    )
+    target = tweet.get("replying_to")
+    reply_metadata = replied_to or any(
         tweet.get(k)
         for k in ("replying_to", "in_reply_to_tweet_id", "in_reply_to_status_id")
-    ):
+    )
+    if tweet.get("is_reply") is True or reply_metadata:
+        handle = (
+            target.strip().removeprefix("@").casefold()
+            if isinstance(target, str)
+            else ""
+        )
+        if handle != "thsottiaux":
+            return False
+    elif tweet.get("is_reply") is not False:
         return False
     if any(
         tweet.get(k)
         for k in ("is_retweet", "is_repost", "retweeted_status", "reposted_by")
     ):
         return False
-    references = tweet.get("referenced_tweets") or []
     if isinstance(references, list) and any(
-        isinstance(ref, dict) and ref.get("type") in {"replied_to", "retweeted"}
-        for ref in references
+        isinstance(ref, dict) and ref.get("type") == "retweeted" for ref in references
     ):
         return False
     text = str(tweet.get("text") or "").strip()
@@ -1415,6 +1427,20 @@ def _cap_text(text: str) -> str:
     return text[: MAX_TWEET_TEXT_CHARS - 1].rstrip() + "…"
 
 
+def _quote_from_tweet(tweet: Any) -> dict | None:
+    """Quote availability is independent of the parent tweet's text quality."""
+    if isinstance(tweet, dict):
+        for field in ("quote", "quoted_tweet"):
+            quote = tweet.get(field)
+            if (
+                isinstance(quote, dict)
+                and isinstance(quote.get("text"), str)
+                and quote["text"].strip()
+            ):
+                return quote
+    return None
+
+
 def _content_from_provider_payload(payload: Any, source: str) -> TweetContent | None:
     """解析 FxTwitter / VxTwitter 单条 status JSON（纯函数）。
 
@@ -1445,13 +1471,7 @@ def _content_from_provider_payload(payload: Any, source: str) -> TweetContent | 
     # QQ 展示裁剪在 build_signal_message（display layer）完成，且裁剪后
     # 标签降级为「原文摘录」。
     content = TweetContent(text, source, completeness)
-    quote = tweet.get("quote") or tweet.get("quoted_tweet")
-    if (
-        isinstance(quote, dict)
-        and isinstance(quote.get("text"), str)
-        and quote["text"].strip()
-    ):
-        content.quote = quote
+    content.quote = _quote_from_tweet(tweet)
     return content
 
 
@@ -2725,7 +2745,8 @@ class CodexResetWatcher(MaiBotPlugin):
     ) -> TweetContent | None:
         """alert 已成立后的 Tibo 原文补全（v0.1.7；review-fix 收紧来源）。
 
-        选择策略：provider 返回 full → 立即采用；返回 unknown 只作为
+        选择策略：文字模式 provider 返回 full → 立即采用；图片模式可
+        继续下一级补 quote，正文与 quote 独立择取。返回 unknown 只作为
         best candidate 保留并继续尝试下一 provider；两个 provider 之后，
         再与 feed 同 id 推文比较，保留最优可得真实文本
         （_better_content：full 优先于 unknown，同级取更长文本）。
@@ -2761,6 +2782,9 @@ class CodexResetWatcher(MaiBotPlugin):
         绝不冒充 Tibo 原文/摘录展示，也绝不作为翻译输入。
         """
         best: TweetContent | None = None
+        quote: dict | None = None
+        feed_quote = self._feed_quote(tweet_id, feed)
+        seek_quote = self.config.watcher.display_mode == "image"
         if tweet_id:
             providers = (
                 ("fxtwitter", FXTWITTER_STATUS_URL.format(tweet_id=tweet_id)),
@@ -2773,6 +2797,12 @@ class CodexResetWatcher(MaiBotPlugin):
                 except Exception:  # noqa: BLE001 — 故意宽捕获：enrichment 任何异常都降级，绝不外抛
                     payload = None
                 elapsed = time.monotonic() - started
+                provider_tweet = (
+                    payload.get("tweet")
+                    if name == "fxtwitter" and isinstance(payload, dict)
+                    else payload
+                )
+                quote = quote or _quote_from_tweet(provider_tweet)
                 content = _content_from_provider_payload(payload, name)
                 if content is None:
                     logger.info(
@@ -2781,24 +2811,26 @@ class CodexResetWatcher(MaiBotPlugin):
                         elapsed,
                     )
                     continue
-                if content.completeness == "full":
-                    if content.quote is None:
-                        content.quote = self._feed_quote(tweet_id, feed)
+                best = _better_content(best, content)
+                if best.completeness == "full":
                     logger.info(
-                        "Tweet 全文：provider=%s completeness=full len=%d 耗时=%.2fs",
+                        "Tweet 全文：provider=%s completeness=%s len=%d 耗时=%.2fs",
+                        name,
+                        content.completeness,
+                        len(content.text),
+                        elapsed,
+                    )
+                    if not seek_quote or quote or feed_quote:
+                        best.quote = quote or feed_quote
+                        return best
+                else:
+                    logger.info(
+                        "Tweet 全文：provider=%s completeness=unknown len=%d，"
+                        "保留候选并继续尝试更完整来源（耗时 %.2fs）",
                         name,
                         len(content.text),
                         elapsed,
                     )
-                    return content
-                best = _better_content(best, content)
-                logger.info(
-                    "Tweet 全文：provider=%s completeness=unknown len=%d，"
-                    "保留候选并继续尝试更完整来源（耗时 %.2fs）",
-                    name,
-                    len(content.text),
-                    elapsed,
-                )
         # feed 同 id 推文兜底（真实 Tweet 文本）：与既有候选比较取优，
         # 而非机械取先到者。
         if tweet_id and isinstance(feed, dict):
@@ -2807,10 +2839,7 @@ class CodexResetWatcher(MaiBotPlugin):
                     text = str(tweet.get("text") or "").strip()
                     if text:
                         candidate = TweetContent(text, "feed", "unknown")
-                        candidate.quote = self._feed_quote(tweet_id, feed)
                         best = _better_content(best, candidate)
-                        if best is not None and best.quote is None:
-                            best.quote = candidate.quote
                         logger.info(
                             "Tweet 全文：provider=feed completeness=unknown len=%d（候选比较）",
                             len(text),
@@ -2824,6 +2853,7 @@ class CodexResetWatcher(MaiBotPlugin):
                 "（不展示摘要、不交给 LLM）"
             )
         else:
+            best.quote = quote or feed_quote
             logger.info(
                 "Tweet 全文：采用 provider=%s completeness=%s len=%d",
                 best.source,
@@ -2834,15 +2864,7 @@ class CodexResetWatcher(MaiBotPlugin):
 
     @staticmethod
     def _feed_quote(tweet_id: str, feed: Any) -> dict | None:
-        tweet = _feed_item(feed, "tweets", tweet_id)
-        quote = tweet.get("quote") or tweet.get("quoted_tweet")
-        if (
-            isinstance(quote, dict)
-            and isinstance(quote.get("text"), str)
-            and quote["text"].strip()
-        ):
-            return quote
-        return None
+        return _quote_from_tweet(_feed_item(feed, "tweets", tweet_id))
 
     def _group_l4_alerted(self, group_id: str, tweet_id: str) -> bool:
         """per-group 判定：该群是否已记录当前 tweet 的结构化 L4 receipt

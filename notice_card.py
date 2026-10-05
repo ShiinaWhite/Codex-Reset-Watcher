@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from html import escape
@@ -33,7 +34,9 @@ class NoticeCard:
 def _body(text: str, translation: str) -> str:
     blocks = []
     for lang, value in (("zh", translation), ("en", text)):
-        if value:
+        # Hide bare links only in images; source data and text fallback stay intact.
+        value = re.sub(r"https?://\S+", "", value)
+        if value.strip():
             blocks.append(
                 f'<div class="body {lang}" lang="{lang}">{escape(value)}</div>'
             )
@@ -60,7 +63,6 @@ def build_card_html(card: NoticeCard, now: datetime) -> str:
             if handle == "thsottiaux"
             else ""
         )
-        quote_url = str(quote.get("url") or "")
         quote_time = ""
         try:
             at = quote.get("at")
@@ -81,7 +83,6 @@ def build_card_html(card: NoticeCard, now: datetime) -> str:
             f'<span class="handle">{escape("@" + handle if handle else "")}</span></div>'
             f'<span class="quote-label">Quote<span class="handle">{quote_time}</span></span></div>'
             + _body(str(quote["text"]), card.quote_translation)
-            + (f'<div class="source">{escape(quote_url)}</div>' if quote_url else "")
             + "</aside>"
         )
     values = dict(
@@ -100,7 +101,6 @@ def build_card_html(card: NoticeCard, now: datetime) -> str:
         layout="with-quote" if quote_html else "",
         avatar=_avatar() if card.tweet else "",
         time=moment.strftime("%Y-%m-%d %H:%M"),
-        source=f'<div class="source">{escape(card.url)}</div>' if card.url else "",
     )
     template = "tweet.html" if card.tweet else "system.html"
     return Template((TEMPLATES / template).read_text(encoding="utf-8")).substitute(

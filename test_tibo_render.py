@@ -663,3 +663,214 @@ def test_actual_existing_pipelines_absorb_tibo_delivery(tmp_path, monkeypatch, l
         assert f"push-banked:{tid}" in _gstate(p)["push_banked_keys"]
     else:
         assert _gstate(p)["notified_keys"]
+
+
+@pytest.mark.parametrize(
+    "metadata, expected",
+    [
+        ({"is_reply": True, "replying_to": "thsottiaux"}, True),
+        ({"is_reply": True, "replying_to": "@Thsottiaux"}, True),
+        ({"is_reply": True, "replying_to": "  @Thsottiaux  "}, True),
+        ({"is_reply": True, "replying_to": "someone"}, False),
+        ({"is_reply": True}, False),
+        ({"is_reply": True, "in_reply_to_tweet_id": "123"}, False),
+        (
+            {
+                "is_reply": True,
+                "replying_to": "thsottiaux",
+                "referenced_tweets": [{"type": "replied_to", "id": "123"}],
+            },
+            True,
+        ),
+        ({"is_reply": True, "replying_to": "thsottiaux", "is_retweet": True}, False),
+        (
+            {
+                "is_reply": True,
+                "replying_to": "thsottiaux",
+                "referenced_tweets": [{"type": "retweeted", "id": "123"}],
+            },
+            False,
+        ),
+    ],
+)
+def test_self_reply_regression_and_full_push_dispatch(
+    tmp_path, monkeypatch, metadata, expected
+):
+    p = ready(tmp_path, monkeypatch, tibo_full_push=True)
+    # Actual counterexample identity/reply metadata supplied in review;
+    # body/timestamp remain synthetic to exercise fresh-post dispatch offline.
+    tweet_id = "2104467346945675347"
+    item = post(id=tweet_id, **metadata)
+    assert module.is_tibo_main_post(item) is expected
+    run_posts(p, feed(item))
+    assert len(p.ctx.send.sent_messages) == int(expected)
+    assert (tweet_id in _gstate(p).get("tibo_delivered_ids", [])) is expected
+
+
+@pytest.mark.parametrize("mode", ["text", "image"])
+@pytest.mark.parametrize("secondary_note", [None, False])
+def test_quote_enrichment_keeps_best_primary_and_limits_text_latency(
+    tmp_path, monkeypatch, mode, secondary_note
+):
+    p = ready(tmp_path, monkeypatch, display_mode=mode)
+    primary = ("Provider A complete primary. " * 20).strip()
+    quote = {
+        "text": "Quote body from provider B",
+        "url": "https://x.com/other/status/123",
+    }
+    calls = []
+
+    async def provider(url, timeout):
+        calls.append(url)
+        if "fxtwitter" in url:
+            return {"tweet": {"text": primary, "is_note_tweet": True}}
+        return {
+            "text": "Short excerpt",
+            "is_note_tweet": secondary_note,
+            "quote": quote,
+        }
+
+    p._get_json = provider
+    result = asyncio.run(p._enrich_content(ID, feed(post())))
+    assert result.text == primary and result.source == "fxtwitter"
+    assert result.completeness == "full"
+    assert result.quote == (quote if mode == "image" else None)
+    assert len(calls) == (2 if mode == "image" else 1)
+
+
+@pytest.mark.parametrize("mode", ["text", "image"])
+def test_quote_enrichment_survives_better_primary_without_quote(
+    tmp_path, monkeypatch, mode
+):
+    p = ready(tmp_path, monkeypatch, display_mode=mode)
+    primary = ("Provider B complete primary. " * 20).strip()
+    quote = {"text": "Quote obtained earlier from provider A"}
+
+    async def provider(url, timeout):
+        if "fxtwitter" in url:
+            return {"tweet": {"text": "Excerpt", "is_note_tweet": True, "quote": quote}}
+        return {"text": primary}
+
+    p._get_json = provider
+    result = asyncio.run(p._enrich_content(ID, feed(post())))
+    assert result.text == primary and result.source == "vxtwitter"
+    assert result.quote == quote
+
+
+def test_quote_enrichment_survives_feed_primary_selection(tmp_path, monkeypatch):
+    p = ready(tmp_path, monkeypatch, display_mode="image")
+    quote = {"text": "Provider quote retained across feed selection"}
+
+    async def provider(url, timeout):
+        return (
+            {"tweet": {"text": "Excerpt", "quote": quote}}
+            if "fxtwitter" in url
+            else None
+        )
+
+    p._get_json = provider
+    result = asyncio.run(p._enrich_content(ID, feed(post(text="Longer feed primary"))))
+    assert result.source == "feed" and result.text == "Longer feed primary"
+    assert result.quote == quote
+
+
+@pytest.mark.parametrize("second", ["quote-only", "unavailable", "invalid-quote"])
+def test_quote_only_or_failed_provider_keeps_full_primary(
+    tmp_path, monkeypatch, second
+):
+    p = ready(tmp_path, monkeypatch, display_mode="image")
+    quote = {"text": "Quote with no second-provider primary body"}
+
+    async def provider(url, timeout):
+        if "fxtwitter" in url:
+            return {"tweet": {"text": "Complete primary", "is_note_tweet": False}}
+        if second == "unavailable":
+            raise RuntimeError("Quote provider unavailable")
+        return {"quote": quote if second == "quote-only" else {"id": "123"}}
+
+    p._get_json = provider
+    result = asyncio.run(p._enrich_content(ID, feed(post())))
+    assert result.text == "Complete primary" and result.source == "fxtwitter"
+    assert result.quote == (quote if second == "quote-only" else None)
+
+
+def test_feed_quote_avoids_extra_provider_request_after_full_primary(
+    tmp_path, monkeypatch
+):
+    p = ready(tmp_path, monkeypatch, display_mode="image")
+    quote = {"text": "Available feed quote"}
+    calls = []
+
+    async def provider(url, timeout):
+        calls.append(url)
+        return {"tweet": {"text": "Full primary", "is_note_tweet": False}}
+
+    p._get_json = provider
+    result = asyncio.run(p._enrich_content(ID, feed(post(quote=quote))))
+    assert result.text == "Full primary" and result.quote == quote
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("kind", ["tweet", "quote", "system"])
+def test_image_html_has_no_source_elements_or_bare_urls(kind):
+    main_url = f"https://x.com/thsottiaux/status/{ID}"
+    quoted_url = "https://x.com/other/status/123"
+    source_url = "https://codex-reset.com/banked-reset"
+    card = NoticeCard(
+        "Title",
+        f"English body {main_url}",
+        f"中文正文 {main_url}",
+        url=source_url if kind == "system" else main_url,
+        tweet=kind != "system",
+    )
+    if kind == "quote":
+        card.quote = {"text": f"Quoted body {quoted_url}", "url": quoted_url}
+        card.quote_translation = f"引用中文 {quoted_url}"
+    html = build_card_html(card, NOW)
+    assert ".source" not in html and 'class="source"' not in html
+    assert main_url not in html and quoted_url not in html and source_url not in html
+    assert "English body" in html and "中文正文" in html
+    assert card.url == (source_url if kind == "system" else main_url)
+    assert main_url in card.text  # Rendering never rewrites original source data.
+    if kind == "quote":
+        assert '<aside class="quote">' in html and "Quoted body" in html
+        assert card.quote["url"] == quoted_url
+
+
+@pytest.mark.parametrize("mode", ["text", "image"])
+def test_original_links_survive_text_and_image_failure_fallback(
+    tmp_path, monkeypatch, mode
+):
+    p = ready(tmp_path, monkeypatch, tibo_full_push=True, display_mode=mode)
+    if mode == "image":
+        wire_images(p, render_failure=True)
+    run_posts(p, feed(post()))
+    assert len(p.ctx.send.sent_messages) == 1
+    assert (
+        f"原帖：https://x.com/thsottiaux/status/{ID}" in p.ctx.send.sent_messages[0][1]
+    )
+    assert ID in _gstate(p)["tibo_delivered_ids"]
+
+
+@pytest.mark.parametrize("mode", ["text", "image"])
+def test_system_source_link_survives_text_and_image_send_failure(
+    tmp_path, monkeypatch, mode
+):
+    import json
+    from test_delivery_identity import FIXTURES, BANKED_ID, _feed
+
+    p = ready(tmp_path, monkeypatch, display_mode=mode)
+    if mode == "image":
+        wire_images(p, image_result=False)
+    payload = json.loads((FIXTURES / "push_notification.json").read_text())
+
+    async def scenario():
+        await p._process_push_banked(payload, [GID], _feed(BANKED_ID))
+        await _drain_inflight(p)
+
+    asyncio.run(scenario())
+    assert len(p.ctx.send.sent_messages) == 1
+    assert (
+        "来源：https://codex-reset.com/banked-reset" in p.ctx.send.sent_messages[0][1]
+    )
+    assert _gstate(p)["push_banked_keys"] == [f"push-banked:{BANKED_ID}"]
