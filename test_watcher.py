@@ -1889,7 +1889,7 @@ def test_runner_style_upgrade_path_with_real_sdk(tmp_path):
 
     # runner 版本升级路径：compare_versions("1.0.0","1.1.0") → rebuild
     rebuilt = rebuild_plugin_config_data(default_config, raw_config)
-    assert rebuilt["plugin"]["config_version"] == "1.2.0"  # v0.1.8 起
+    assert rebuilt["plugin"]["config_version"] == "1.3.0"  # 新增动态/展示模式默认项
     assert rebuilt["watcher"]["group_id"] == "100000001"  # 旧值按名保留
     assert rebuilt["watcher"]["group_ids"] == []
     assert rebuilt["watcher"]["group_ids_migrated"] is False

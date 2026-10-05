@@ -234,7 +234,9 @@ from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+from notice_card import NoticeCard, render_card
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -348,10 +350,9 @@ class PluginSectionConfig(PluginConfigBase):
     )
     # 配置结构版本由 SDK 校验体系要求保留（TOML 中必须存在），
     # 但不需要用户在 WebUI 中调整，故隐藏。1.1.0 → 1.2.0 触发 host
-    # rebuild（按字段名保留旧值、合并新增 [llm] 段默认值并落盘），
-    # 使 v0.1.8 新增配置与默认 prompt 在升级后立即可见。
+    # rebuild 按字段名保留旧值；1.3.0 增加动态与展示模式的默认项。
     config_version: str = Field(
-        default="1.2.0",
+        default="1.3.0",
         description="插件内部配置结构版本。",
         json_schema_extra={"label": "配置版本", "hidden": True},
     )
@@ -486,6 +487,22 @@ class WatcherConfig(PluginConfigBase):
         description="检查 Codex 重置状态的时间间隔，默认 240 秒",
         json_schema_extra={"label": "检查间隔（秒）"},
     )
+    tibo_full_push: bool = Field(
+        default=False,
+        description="推送 Tibo 主动发布的普通帖、长帖和带评论的引用帖；不推送回复或纯转发。",
+        json_schema_extra={
+            "label": "Tibo 动态全推送",
+            "hint": "首次开启按群静默建立历史基线；已有告警只在本群动态投递成功后被吸收",
+        },
+    )
+    display_mode: Literal["text", "image"] = Field(
+        default="text",
+        description="通知展示模式；图片生成或发送失败自动回退文字。",
+        json_schema_extra={
+            "label": "展示模式",
+            "enum_labels": {"text": "文字版", "image": "图片版"},
+        },
+    )
     # 以下为固定内部参数：通知目标即北京时间，数据源地址固定，
     # 不提供 WebUI 编辑项（旧 TOML 中的值仍会被读取，保证兼容）。
     timezone: str = Field(
@@ -582,6 +599,35 @@ def _feed_item(feed: Any, collection: str, event_id: str) -> dict[str, Any]:
         ),
         {},
     )
+
+
+def is_tibo_main_post(tweet: Any) -> bool:
+    """Use timeline metadata; unknown reply status is not a proven main post."""
+    if not isinstance(tweet, dict) or tweet.get("is_reply") is not False:
+        return False
+    if any(
+        tweet.get(k)
+        for k in ("replying_to", "in_reply_to_tweet_id", "in_reply_to_status_id")
+    ):
+        return False
+    if any(
+        tweet.get(k)
+        for k in ("is_retweet", "is_repost", "retweeted_status", "reposted_by")
+    ):
+        return False
+    references = tweet.get("referenced_tweets") or []
+    if isinstance(references, list) and any(
+        isinstance(ref, dict) and ref.get("type") in {"replied_to", "retweeted"}
+        for ref in references
+    ):
+        return False
+    text = str(tweet.get("text") or "").strip()
+    if not text or text.startswith("RT @"):
+        return False
+    # A URL-only share carries no own commentary, even if quote metadata is absent.
+    import re
+
+    return bool(re.sub(r"https?://\S+", "", text).strip())
 
 
 def _banked_notice_identity(alert: dict[str, Any], event_id: str, feed: Any) -> str:
@@ -771,6 +817,12 @@ def _carry_validated_state(legacy: Any) -> dict[str, Any]:
     delivered = legacy.get("delivered_notice_keys")
     if isinstance(delivered, list) and all(isinstance(k, str) for k in delivered):
         carried["delivered_notice_keys"] = list(delivered)
+    for field in ("tibo_seen_ids", "tibo_delivered_ids"):
+        values = legacy.get(field)
+        if isinstance(values, list) and all(isinstance(k, str) for k in values):
+            carried[field] = list(values)
+    if legacy.get("tibo_baseline_done") is True and "tibo_seen_ids" in carried:
+        carried["tibo_baseline_done"] = True
     reset_at = _parse_iso(legacy.get("last_notified_reset_at"))
     if reset_at is not None:
         carried["last_notified_reset_at"] = reset_at.isoformat()
@@ -1342,10 +1394,11 @@ class TweetContent:
     绝不进入 QQ 文案（用户侧只感知「原文 / 原文摘录」措辞）。
     """
 
-    __slots__ = ("completeness", "source", "text")
+    __slots__ = ("completeness", "source", "text", "quote")
 
     def __init__(self, text: str, source: str, completeness: str) -> None:
         self.text = text
+        self.quote: dict[str, Any] | None = None
         self.source = source  # fxtwitter | vxtwitter | feed | forecast
         self.completeness = completeness  # full | unknown
 
@@ -1391,7 +1444,15 @@ def _content_from_provider_payload(payload: Any, source: str) -> TweetContent | 
     # 注意：此处不得裁剪——TweetContent.text 必须保存 provider 完整正文；
     # QQ 展示裁剪在 build_signal_message（display layer）完成，且裁剪后
     # 标签降级为「原文摘录」。
-    return TweetContent(text, source, completeness)
+    content = TweetContent(text, source, completeness)
+    quote = tweet.get("quote") or tweet.get("quoted_tweet")
+    if (
+        isinstance(quote, dict)
+        and isinstance(quote.get("text"), str)
+        and quote["text"].strip()
+    ):
+        content.quote = quote
+    return content
 
 
 def _better_content(
@@ -1708,6 +1769,7 @@ class CodexResetWatcher(MaiBotPlugin):
             self._fetch_forecast(),
             self._fetch_push_notification(),
         )
+        await self._process_tibo_posts(feed, groups)
         await self._process_upstream_alert(forecast, groups, feed)
         await self._process_push_banked(notification, groups, feed)
         await self._process_feed_signals(feed, groups, beijing, forecast)
@@ -1724,6 +1786,161 @@ class CodexResetWatcher(MaiBotPlugin):
         except (AttributeError, RuntimeError):
             return None
         return await self._get_json(f"{codex_base}/api/feed", FEED_TIMEOUT_SECONDS)
+
+    def _tibo_inflight(self, tweet_id: str, group_id: str) -> bool:
+        item = self._inflight.get(f"tibo:{tweet_id}")
+        return bool(item and group_id in item.get("groups", []))
+
+    @staticmethod
+    def _event_tibo_id(event_id: str, source: dict, feed: Any) -> str:
+        tweet = _feed_item(feed, "tweets", event_id)
+        event = _feed_item(feed, "events", event_id)
+        for url in (source.get("url"), event.get("url"), tweet.get("url")):
+            tweet_id = _tweet_source_id(url)
+            if tweet_id and urlparse(url).path.split("/")[1].lower() == "thsottiaux":
+                return tweet_id
+        return event_id if tweet else ""
+
+    async def _route_tibo_groups(
+        self, groups, field, key, identity, tweet_id, *, l4_tweet_id=""
+    ):
+        """Avoid duplicate enrichment, but never promote an inflight/baseline receipt."""
+        if not self.config.watcher.tibo_full_push or not tweet_id:
+            return groups
+        remaining = []
+        for gid in groups:
+            if gid not in self._target_groups():
+                continue
+            delivered = tweet_id in set(
+                self._group_state(gid).get("tibo_delivered_ids") or []
+            )
+            if delivered or self._tibo_inflight(tweet_id, gid):
+                await self._deliver_notice(
+                    gid,
+                    field,
+                    key,
+                    identity,
+                    "",
+                    source_tweet_id=tweet_id,
+                    l4_tweet_id=l4_tweet_id,
+                )
+                # Recheck evidence: a cancelled task/config update cannot eat the alert.
+                if gid not in self._target_groups():
+                    continue
+                if self.config.watcher.tibo_full_push and (
+                    tweet_id
+                    in set(self._group_state(gid).get("tibo_delivered_ids") or [])
+                    or self._tibo_inflight(tweet_id, gid)
+                ):
+                    continue
+            remaining.append(gid)
+        return remaining
+
+    async def _process_tibo_posts(self, feed: Any, groups: list[str]) -> None:
+        if not self.config.watcher.tibo_full_push or not isinstance(feed, dict):
+            return
+        profile = feed.get("profile")
+        if (
+            feed.get("stale") is True
+            or not isinstance(profile, dict)
+            or profile.get("handle") != "thsottiaux"
+            or feed.get("source_scope") != "timeline"
+        ):
+            return
+        tweets = feed.get("tweets")
+        if not isinstance(tweets, list) or not tweets:
+            return
+        posts = [
+            t
+            for t in tweets
+            if is_tibo_main_post(t) and str(t.get("id") or "").isdigit()
+        ]
+        active = []
+        async with self._state_lock:
+            changed = False
+            for gid in groups:
+                entry = self._group_state(gid)
+                if not entry.get("tibo_baseline_done"):
+                    entry["tibo_seen_ids"] = sorted({str(t["id"]) for t in posts})
+                    entry["tibo_baseline_done"] = True
+                    changed = True
+                else:
+                    active.append(gid)
+            if changed:
+                self._save_state()
+        # Oldest first; baseline/age exclusions never count as delivery evidence.
+        for tweet in sorted(posts, key=lambda t: str(t.get("at") or "")):
+            tweet_id = str(tweet["id"])
+            pending = [
+                gid
+                for gid in active
+                if tweet_id
+                not in set(self._group_state(gid).get("tibo_seen_ids") or [])
+            ]
+            if not pending:
+                continue
+            moment = _parse_iso(tweet.get("at"))
+            if moment is None:
+                continue  # Missing timestamp may be repaired next poll.
+            if _utcnow() - moment > timedelta(hours=MAX_SIGNAL_AGE_HOURS):
+                async with self._state_lock:
+                    for gid in pending:
+                        entry = self._group_state(gid)
+                        entry["tibo_seen_ids"] = sorted(
+                            set(entry.get("tibo_seen_ids") or []) | {tweet_id}
+                        )
+                    self._save_state()
+                continue
+            key = f"tibo:{tweet_id}"
+            if key not in self._inflight:
+                self._inflight[key] = {
+                    "task": asyncio.create_task(
+                        self._tibo_pipeline(tweet, feed, pending), name=key
+                    ),
+                    "kind": "tibo",
+                    "tweet_id": tweet_id,
+                    "groups": list(pending),
+                }
+
+    async def _tibo_pipeline(self, tweet: dict, feed: dict, groups: list[str]) -> None:
+        tweet_id = str(tweet["id"])
+        key = f"tibo:{tweet_id}"
+        try:
+            content = await self._enrich_content(tweet_id, feed)
+            url = f"https://x.com/thsottiaux/status/{tweet_id}"
+            translation = await self._llm_translate_content(
+                tweet_id, url, str(tweet.get("at") or ""), content
+            )
+            message = build_full_notice(
+                "Tibo 动态",
+                url,
+                content.text if content else None,
+                content.completeness if content else None,
+                translation,
+            )
+            card = await self._notice_card(
+                "Tibo 动态", url, content, translation, str(tweet.get("at") or ""), True
+            )
+            for gid in groups:
+                if not self.config.watcher.tibo_full_push:
+                    break
+                # Separate success-only receipt, under the same per-group gate.
+                await self._deliver_notice(
+                    gid, "tibo_delivered_ids", tweet_id, key, message, card=card
+                )
+                async with self._state_lock:
+                    if gid in self._target_groups() and tweet_id in set(
+                        self._group_state(gid).get("tibo_delivered_ids") or []
+                    ):
+                        entry = self._group_state(gid)
+                        entry["tibo_seen_ids"] = sorted(
+                            set(entry.get("tibo_seen_ids") or []) | {tweet_id}
+                        )
+                        self._save_state()
+        except Exception:
+            logger.exception("Tibo 动态管线异常：%s", tweet_id)
+        finally:
+            self._inflight.pop(key, None)
 
     async def _fetch_forecast(self) -> dict[str, Any] | None:
         """L4 mirror 源（/api/forecast 的 official_signal）。
@@ -2023,6 +2240,12 @@ class CodexResetWatcher(MaiBotPlugin):
         banked_key = f"banked-primary:{signal.key}"
         try:
             identity = signal.key
+            source_id = self._event_tibo_id(signal.event_id, {}, feed)
+            groups = await self._route_tibo_groups(
+                groups, "notified_keys", signal.key, identity, source_id
+            )
+            if not groups:
+                return
             remaining = [
                 gid for gid in groups if not self._notice_delivered(gid, identity)
             ]
@@ -2051,9 +2274,23 @@ class CodexResetWatcher(MaiBotPlugin):
             message = self._event_notice_message(
                 BANKED_NOTICE_TITLE, url, content, translation, upstream
             )
+            card = await self._notice_card(
+                BANKED_NOTICE_TITLE,
+                url,
+                content,
+                translation,
+                published_at,
+                bool(source_id),
+            )
             for group_id in groups:
                 await self._deliver_notice(
-                    group_id, "notified_keys", signal.key, identity, message
+                    group_id,
+                    "notified_keys",
+                    signal.key,
+                    identity,
+                    message,
+                    source_tweet_id=source_id,
+                    card=card,
                 )
         except Exception:
             logger.exception("Banked 通知管线异常：%s", banked_key)
@@ -2135,6 +2372,17 @@ class CodexResetWatcher(MaiBotPlugin):
         """
         try:
             identity = f"global:{osig_tweet_id}" if osig_tweet_id else ""
+            source_id = osig_tweet_id or self._event_tibo_id("", osig, feed)
+            pending = await self._route_tibo_groups(
+                pending,
+                "upstream_alert_keys",
+                key,
+                identity,
+                source_id,
+                l4_tweet_id=osig_tweet_id,
+            )
+            if not pending:
+                return
             if (
                 identity
                 and all(
@@ -2173,6 +2421,26 @@ class CodexResetWatcher(MaiBotPlugin):
                 content.completeness if content is not None else None,
                 translation,
             )
+            card_content = content
+            card_translation = translation
+            if self.config.watcher.display_mode == "image" and not source_id:
+                body = osig.get("body") or osig.get("text") or osig.get("summary")
+                if isinstance(body, str) and body.strip():
+                    card_content = TweetContent(body.strip(), "upstream", "unknown")
+                    card_translation = await self._llm_translate_content(
+                        "",
+                        str(osig.get("url") or ""),
+                        self._l4_published_at(osig, "", feed),
+                        card_content,
+                    )
+            card = await self._notice_card(
+                GLOBAL_NOTICE_TITLE,
+                str(osig.get("url") or ""),
+                card_content,
+                card_translation,
+                self._l4_published_at(osig, osig_tweet_id, feed),
+                bool(source_id),
+            )
             for group_id in pending:
                 await self._deliver_notice(
                     group_id,
@@ -2181,6 +2449,8 @@ class CodexResetWatcher(MaiBotPlugin):
                     f"global:{osig_tweet_id}" if osig_tweet_id else "",
                     message,
                     l4_tweet_id=osig_tweet_id,
+                    source_tweet_id=source_id,
+                    card=card,
                 )
         except Exception:
             logger.exception("Upstream 告警处理管线异常：%s", key)
@@ -2265,6 +2535,12 @@ class CodexResetWatcher(MaiBotPlugin):
         key = f"{PUSH_BANKED_KEY_PREFIX}{alert_id}"
         try:
             identity = _banked_notice_identity(alert, alert_id, feed)
+            source_id = self._event_tibo_id(alert_id, alert, feed)
+            pending = await self._route_tibo_groups(
+                pending, "push_banked_keys", key, identity, source_id
+            )
+            if not pending:
+                return
             if identity and all(
                 self._notice_delivered(gid, identity) for gid in pending
             ):
@@ -2290,9 +2566,23 @@ class CodexResetWatcher(MaiBotPlugin):
             message = self._event_notice_message(
                 BANKED_NOTICE_TITLE, url, content, translation, upstream
             )
+            card = await self._notice_card(
+                BANKED_NOTICE_TITLE,
+                url,
+                content,
+                translation,
+                self._l4_published_at(alert, alert_id, feed),
+                bool(source_id),
+            )
             for group_id in pending:
                 await self._deliver_notice(
-                    group_id, "push_banked_keys", key, identity, message
+                    group_id,
+                    "push_banked_keys",
+                    key,
+                    identity,
+                    message,
+                    source_tweet_id=source_id,
+                    card=card,
                 )
         except Exception:
             logger.exception("Push Banked 镜像管线异常：%s", key)
@@ -2492,6 +2782,8 @@ class CodexResetWatcher(MaiBotPlugin):
                     )
                     continue
                 if content.completeness == "full":
+                    if content.quote is None:
+                        content.quote = self._feed_quote(tweet_id, feed)
                     logger.info(
                         "Tweet 全文：provider=%s completeness=full len=%d 耗时=%.2fs",
                         name,
@@ -2514,9 +2806,11 @@ class CodexResetWatcher(MaiBotPlugin):
                 if isinstance(tweet, dict) and str(tweet.get("id") or "") == tweet_id:
                     text = str(tweet.get("text") or "").strip()
                     if text:
-                        best = _better_content(
-                            best, TweetContent(text, "feed", "unknown")
-                        )
+                        candidate = TweetContent(text, "feed", "unknown")
+                        candidate.quote = self._feed_quote(tweet_id, feed)
+                        best = _better_content(best, candidate)
+                        if best is not None and best.quote is None:
+                            best.quote = candidate.quote
                         logger.info(
                             "Tweet 全文：provider=feed completeness=unknown len=%d（候选比较）",
                             len(text),
@@ -2538,6 +2832,18 @@ class CodexResetWatcher(MaiBotPlugin):
             )
         return best
 
+    @staticmethod
+    def _feed_quote(tweet_id: str, feed: Any) -> dict | None:
+        tweet = _feed_item(feed, "tweets", tweet_id)
+        quote = tweet.get("quote") or tweet.get("quoted_tweet")
+        if (
+            isinstance(quote, dict)
+            and isinstance(quote.get("text"), str)
+            and quote["text"].strip()
+        ):
+            return quote
+        return None
+
     def _group_l4_alerted(self, group_id: str, tweet_id: str) -> bool:
         """per-group 判定：该群是否已记录当前 tweet 的结构化 L4 receipt
         （upstream_alert_tweet_ids，由 official_signal.tweet_id 显式记录）。
@@ -2552,6 +2858,10 @@ class CodexResetWatcher(MaiBotPlugin):
         entry = self._group_state(group_id)
         if identity in set(entry.get("delivered_notice_keys") or []):
             return True
+        if identity.startswith("tibo:"):
+            return f"tweet:{identity.removeprefix('tibo:')}" in set(
+                entry.get("delivered_notice_keys") or []
+            )
         # v0.1.9+ L4 tweet receipts are positive delivery evidence. In contrast,
         # notified_keys mixes baseline, age exclusions and sends; never use it.
         return identity.startswith("global:") and self._group_l4_alerted(
@@ -2568,8 +2878,10 @@ class CodexResetWatcher(MaiBotPlugin):
         *,
         l4_tweet_id: str = "",
         confirmation: str | None = None,
+        source_tweet_id: str = "",
+        card: NoticeCard | None = None,
     ) -> bool:
-        """Single delivery gate shared by all four notice pipelines.
+        """Single delivery gate shared by the notice pipelines and Tibo posts.
 
         Proven same event/phase across lanes is an alias of one notification.
         Only the known initial likely identity may alias a feed delivery.
@@ -2584,7 +2896,15 @@ class CodexResetWatcher(MaiBotPlugin):
             entry = self._group_state(group_id)
             if key in set(entry.get(field) or []):
                 return False
-            covered = self._notice_delivered(group_id, identity)
+            tibo_covered = False
+            if self.config.watcher.tibo_full_push and source_tweet_id:
+                tibo_covered = source_tweet_id in set(
+                    entry.get("tibo_delivered_ids") or []
+                )
+                if not tibo_covered and self._tibo_inflight(source_tweet_id, group_id):
+                    # No receipt on defer: failure/cancellation lets the old lane retry.
+                    return False
+            covered = tibo_covered or self._notice_delivered(group_id, identity)
             # Do not swallow likely -> strong or other upstream ID revisions.
             revision = bool(
                 l4_tweet_id
@@ -2593,7 +2913,9 @@ class CodexResetWatcher(MaiBotPlugin):
                     or key != f"{UPSTREAM_ALERT_KEY_PREFIX}signal:{l4_tweet_id}:likely"
                 )
             )
-            should_send = not covered or revision or confirmation is not None
+            should_send = not tibo_covered and (
+                not covered or revision or confirmation is not None
+            )
             if should_send:
                 text = confirmation if covered and confirmation is not None else message
                 # Alias-only optimization lost its evidence while awaiting the
@@ -2601,7 +2923,13 @@ class CodexResetWatcher(MaiBotPlugin):
                 # fabricate success coverage. Caller checks the recorded key.
                 if not text:
                     return False
-                if not await self._send_group_text(group_id, text):
+                delivery_card = card
+                if text == confirmation:
+                    delivery_card = NoticeCard(
+                        title=text.splitlines()[0],
+                        text="\n".join(text.splitlines()[1:]),
+                    )
+                if not await self._send_group_notice(group_id, text, delivery_card):
                     return False
                 # Config may change while the RPC awaits. Do not recreate a
                 # removed group's receipts after reconciliation.
@@ -2613,6 +2941,18 @@ class CodexResetWatcher(MaiBotPlugin):
                 if identity:
                     entry["delivered_notice_keys"] = sorted(
                         set(entry.get("delivered_notice_keys") or []) | {identity}
+                    )
+                # A delayed timeline after a successful old-lane delivery also
+                # has positive Tweet coverage. Baseline/age keys never enter it.
+                tweet_id = source_tweet_id or (
+                    identity.removeprefix("tibo:")
+                    if identity.startswith("tibo:")
+                    else ""
+                )
+                if self.config.watcher.tibo_full_push and tweet_id:
+                    entry["delivered_notice_keys"] = sorted(
+                        set(entry.get("delivered_notice_keys") or [])
+                        | {f"tweet:{tweet_id}"}
                     )
                 if l4_tweet_id:
                     entry["upstream_alert_tweet_ids"] = sorted(
@@ -2807,6 +3147,7 @@ class CodexResetWatcher(MaiBotPlugin):
                     f"global:{signal.event_id}",
                     message,
                     confirmation=message,
+                    source_tweet_id=_tweet_source_id(signal.url),
                 )
         if a_groups:
             l1_key = f"l1-primary:{signal.key}"
@@ -2849,6 +3190,16 @@ class CodexResetWatcher(MaiBotPlugin):
         """
         l1_key = f"l1-primary:{signal.key}"
         try:
+            source_id = self._event_tibo_id(signal.event_id, {"url": signal.url}, feed)
+            groups = await self._route_tibo_groups(
+                groups,
+                "notified_keys",
+                signal.key,
+                f"global:{signal.event_id}",
+                source_id,
+            )
+            if not groups:
+                return
             observed = is_observed_declaration(
                 signal.observation_result,
                 signal.source,
@@ -2873,6 +3224,14 @@ class CodexResetWatcher(MaiBotPlugin):
                 translation,
                 upstream,
             )
+            card = await self._notice_card(
+                GLOBAL_CONFIRMED_TITLE if observed else GLOBAL_NOTICE_TITLE,
+                url,
+                content,
+                translation,
+                signal.tweet_at or signal.observed_at or "",
+                bool(source_id),
+            )
             for group_id in groups:
                 await self._deliver_notice(
                     group_id,
@@ -2883,6 +3242,8 @@ class CodexResetWatcher(MaiBotPlugin):
                     confirmation=build_confirm_effective_message(signal.observed_at)
                     if observed
                     else None,
+                    source_tweet_id=source_id,
+                    card=card,
                 )
         except Exception:
             logger.exception("L1 primary 管线异常：%s", l1_key)
@@ -3003,6 +3364,68 @@ class CodexResetWatcher(MaiBotPlugin):
         if isinstance(stream, dict):
             return self._extract_stream_id(stream)
         return ""
+
+    async def _notice_card(
+        self, title, url, content, translation, at, tweet
+    ) -> NoticeCard | None:
+        if self.config.watcher.display_mode != "image":
+            return None
+        quote = content.quote if content is not None and tweet else None
+        quote_translation = ""
+        if quote:
+            quote_content = TweetContent(str(quote["text"]), content.source, "full")
+            quote_translation = (
+                await self._llm_translate_content(
+                    str(quote.get("id") or ""),
+                    str(quote.get("url") or ""),
+                    str(quote.get("at") or ""),
+                    quote_content,
+                )
+                or ""
+            )
+        return NoticeCard(
+            title=title,
+            url=url,
+            text=content.text if content else "",
+            translation=translation or "",
+            published_at=_parse_iso(at),
+            tweet=tweet,
+            quote=quote,
+            quote_translation=quote_translation,
+        )
+
+    async def _send_group_notice(
+        self, group_id: str, message: str, card: NoticeCard | None = None
+    ) -> bool:
+        if self.config.watcher.display_mode == "image":
+            if card is None:
+                lines = message.splitlines()
+                card = NoticeCard(title=lines[0], text="\n".join(lines[1:]).strip())
+            try:
+                image = await render_card(self.ctx, card, _utcnow())
+                if image and await self._send_group_image(group_id, image):
+                    return True
+            except Exception:
+                logger.exception("图片生成/发送失败，群 %s 回退文字", group_id)
+        return await self._send_group_text(group_id, message)
+
+    async def _send_group_image(self, group_id: str, image: str) -> bool:
+        stream = await self.ctx.chat.get_stream_by_group_id(group_id, platform="qq")
+        stream_id = self._extract_stream_id(stream)
+        if not stream_id:
+            stream_id = self._extract_stream_id(
+                await self.ctx.chat.open_session(
+                    platform="qq",
+                    chat_type="group",
+                    group_id=group_id,
+                )
+            )
+        if not stream_id:
+            return False
+        result = await self.ctx.send.image(image, stream_id, return_details=True)
+        if isinstance(result, dict):
+            return bool(result.get("sent", result.get("success", False)))
+        return bool(result)
 
     async def _send_group_text(self, group_id: str, message: str) -> bool:
         try:

@@ -72,6 +72,8 @@
 [watcher]
 group_ids = []            # 接收提醒的 QQ 群，例如 ["100000001"]
 check_interval = 240      # 检查间隔，默认 240 秒（4 分钟）
+tibo_full_push = false    # Tibo 主动动态全推送，默认关闭
+display_mode = "text"    # text / image，默认文字；图片失败回退文字
 timezone = "Asia/Shanghai"
 
 [llm]
@@ -80,6 +82,23 @@ model_task = "replyer"    # WebUI 推荐选择：replyer / planner / utils
 ```
 
 完整默认配置示例见 [config.example.toml](config.example.toml)。实际 `config.toml` 由 MaiBot 在运行时根据插件配置模型生成和维护，无需手动放置。
+
+## dev 新功能：Tibo 动态与图片通知
+
+`tibo_full_push = true` 新增独立动态车道，从公开 feed 的 Tibo timeline 中推送普通发帖、长帖和有自己评论的引用帖，排除回复、纯转发和只有链接的分享。首次开启或新加群时静默建立本群历史基线，之后按群推送新发现的动态；缺失回复标记或时间的数据等待后续元数据补齐。超过现有 48 小时年龄护栏的历史动态不补发。
+
+既有四个告警车道继续工作。有明确 Tweet 身份的通知，只有在本群已成功收到同一动态时才被吸收；动态在途时暂缓且不写 receipt，失败或取消后既有告警可以重试。系统观测和无 Tweet 来源的告警继续投递。旧车道先成功投递、timeline 后恢复时，也通过成功的 Tweet coverage 避免重复。基线、年龄排除和其它群的 receipt 都不是本群成功投递证据。
+
+`display_mode = "image"` 将所有活跃车道切换为图片通知。图片使用仓库 HTML / CSS 模板，经 MaiBot Host 的 `render.html2png` 本地浏览器截图，再通过 `send.image` 发送。一条管线的图片由各群共享；生成失败、超时、结果无效或某群发图失败，只向该群回退文字。成功发图不追加文字；文字回退成功后同样记录正常 receipt，不再补图。文字和图片都失败则不记 receipt，下一轮独立重试。
+
+- Tweet 模板：保留通知标题，显示 Tibo 头像、名称和 `@thsottiaux`，完整中文译文在英文原文之上。时间使用 `YYYY-MM-DD HH:MM` 与 `UTC+8` 标签。
+- 系统模板：明确显示“系统 / 上游通知”，不显示 Tibo 账号或头像。无发布时间时使用本次生成时间。
+- 引用帖：有引用正文才显示独立引用区；引用也整块翻译，译文在原文之上。引用正文缺失时完全隐藏引用区；正文有而链接无时仍显示正文。暂不处理引用媒体。
+- 翻译失败或禁用时保留原文，告警本身继续投递。浏览器、字体或 Host 渲染能力缺失时回退文字。
+
+这是 dev 待 review 的功能，插件 Release 版本仍保持 0.1.13；配置结构版本为 1.3.0，使 Host 重建配置时补充新项并保留原值。没有修改生产配置或生产状态。
+
+本地 HTML 截图预览（演示文案，未向 QQ 发送）：[带引用的 Tweet](docs/preview/tweet-quote.png)、[普通 Tweet](docs/preview/tweet.png)、[系统通知](docs/preview/system.png)。实现、验证方式及边界见 [开发验证说明](docs/dev-tibo-image.md)。
 
 ## 多群支持
 
