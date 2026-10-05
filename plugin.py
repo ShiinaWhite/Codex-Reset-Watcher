@@ -236,12 +236,16 @@ from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any, Literal
 
-from notice_card import NoticeCard, render_card
 from zoneinfo import ZoneInfo
 
 import aiohttp
 from maibot_sdk import Field, MaiBotPlugin, PluginConfigBase
 from pydantic import field_validator
+
+if __package__:
+    from .notice_card import NoticeCard, render_card
+else:
+    from notice_card import NoticeCard, render_card
 
 logger = logging.getLogger(__name__)
 
