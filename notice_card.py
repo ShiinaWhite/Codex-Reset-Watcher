@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from html import escape
@@ -34,8 +33,6 @@ class NoticeCard:
 def _body(text: str, translation: str) -> str:
     blocks = []
     for lang, value in (("zh", translation), ("en", text)):
-        # Hide bare links only in images; source data and text fallback stay intact.
-        value = re.sub(r"https?://\S+", "", value)
         if value.strip():
             blocks.append(
                 f'<div class="body {lang}" lang="{lang}">{escape(value)}</div>'

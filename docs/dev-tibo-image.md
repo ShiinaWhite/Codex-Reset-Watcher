@@ -4,9 +4,13 @@
 `90174ae7d59ab75d7a6fe6e6c5f826063ac7ccd6`，工作区干净，无需同步。
 只在 dev 实现并推送；未 merge main、未部署、未修改 Marketplace、tag 或 Release。
 
-本次 review fix 基于 dev 的 `f2e86c487e277d96f3e54880f6c0bb9f28902e2a`，
+上一轮 review fix 基于 dev 的 `f2e86c487e277d96f3e54880f6c0bb9f28902e2a`，
 仅修复 self-reply 过滤、quote 独立 enrichment、图片隐藏 URL。字体文件和
 整体视觉样式保持不变；CSS 只删除不再使用的 `.source`。
+
+本轮最小 review fix 基于 `c8d96bdf07127405de53a92b9e8dcd02ff07879e`，
+取消正文和译文的 URL 正则清洗，保留原文中的网址及其后紧跟的中文标点和正文。
+独立来源 URL 仍不展示；字体、布局、颜色及文字回退保持不变。
 
 ## 路由与状态
 
@@ -43,7 +47,7 @@
 异常、超时、空/非法 PNG 结果、无法解析群会话、发图返回失败/抛异常均进入该群文字回退。
 图片成功不发文字；回退文字成功即落正常 receipt，不再补图；两者都失败不落 receipt。
 
-- Tweet 模板由明确 Tibo Tweet 来源选择，保留原标题，不展示来源链接。
+- Tweet 模板由明确 Tibo Tweet 来源选择，保留原标题，不独立展示来源链接。
 - 系统模板明确“系统 / 上游通知”，不冒充 Tibo。
 - 主帖和 quote 各自整块中文在上、英文在下，固定 UTC+8 日期格式。
   发布时间未知时用生成时间。quote 仅在确有正文时显示；无正文不显示占位提示。
@@ -54,7 +58,7 @@
   主帖候选按既有质量规则择优，任何已取得的有效 quote 不随正文切换丢失，feed
   quote 可兜底。图片模式 full 主帖无 quote 时可继续下一级 Provider 补 quote，
   文字模式 full 主帖仍直接返回，不为 quote 增加额外 Provider 延迟。
-- 图片不展示主帖、系统来源或引用帖的裸 URL，也不展示正文中的裸链接；
+- 图片不独立展示主帖、系统来源或引用帖的来源 URL；正文和译文中的网址正常保留。
   清除模板 `$source`、`.source`，但保留内部 `NoticeCard.url` 和 provenance。
   文字模式与图片失败后的文字回退保持原有来源链接及原文展示护栏。
 
@@ -79,12 +83,17 @@ git diff --check
 合计 **303 passed**。Ruff 与 diff 空白检查通过。默认路径只更新配置升级测试中的
 结构版本断言，其它原有测试保持原样。
 
-本次 review fix 新增 27 个 targeted regression cases：self-reply 身份规范化/
+上一轮 review fix 新增 27 个 targeted regression cases：self-reply 身份规范化/
 不明确回复/纯转发排除、两种主帖质量下的跨 Provider quote 保留、feed 候选切换、
-quote-only 或失败 Provider、文字模式请求数、三类图片无 URL、文字与图片回退保留链接。
+quote-only 或失败 Provider、文字模式请求数、三类图片无独立来源 URL、文字与图片回退保留链接。
 完整 pytest **330 passed**（326 项离线测试 + 4 项真实 Chromium 截图），
 targeted 子集 **27 passed**；仓库级 Ruff、format 和 diff 检查通过。
 预览使用原有工具重生成，未向任何 QQ 群发送。
+
+本轮新增 3 个正文 URL 保留回归用例，覆盖 Tweet、quote、系统卡片及译文，
+同时保留 3 类独立来源 URL 不展示的断言。完整 pytest **333 passed**，
+正文/来源 URL 与文字回退 targeted 子集 **10 passed**，独立真实 Chromium
+截图测试 **4 passed**；Ruff、format 和 diff 检查通过。未发送真实 QQ 消息。
 
 预览复现：
 
@@ -103,7 +112,7 @@ python tools/preview_cards.py --output docs/preview
 2. 使用现有轮询间隔、48h 年龄护栏、首次静默基线；关闭期间再开启若已有基线，
    最近 48h 内尚未见的动态可以补发。上游缺少足以确认动态归属的回复元数据或时间时，
    等待后续数据修复。
-3. 翻译/正文补全失败会保留可得原文；文字模式与文字回退保留来源链接，图片不显示。
+3. 翻译/正文补全失败会保留可得原文；文字模式与文字回退保留来源链接，图片不独立显示来源链接。
    不猜测引用正文，不展示失败占位块。
    Host 的浏览器/字体不同可能改变换行；本地预览已用中文字体检查。
 4. 发送成功后落盘仍沿用项目 at-least-once 边界。平台已接受但 RPC 超时、进程在成功

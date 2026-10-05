@@ -812,29 +812,48 @@ def test_feed_quote_avoids_extra_provider_request_after_full_primary(
 
 
 @pytest.mark.parametrize("kind", ["tweet", "quote", "system"])
-def test_image_html_has_no_source_elements_or_bare_urls(kind):
+def test_image_html_has_no_independent_source_urls(kind):
     main_url = f"https://x.com/thsottiaux/status/{ID}"
     quoted_url = "https://x.com/other/status/123"
     source_url = "https://codex-reset.com/banked-reset"
     card = NoticeCard(
         "Title",
-        f"English body {main_url}",
-        f"中文正文 {main_url}",
+        "English body",
+        "中文正文",
         url=source_url if kind == "system" else main_url,
         tweet=kind != "system",
     )
     if kind == "quote":
-        card.quote = {"text": f"Quoted body {quoted_url}", "url": quoted_url}
-        card.quote_translation = f"引用中文 {quoted_url}"
+        card.quote = {"text": "Quoted body", "url": quoted_url}
+        card.quote_translation = "引用中文"
     html = build_card_html(card, NOW)
     assert ".source" not in html and 'class="source"' not in html
     assert main_url not in html and quoted_url not in html and source_url not in html
     assert "English body" in html and "中文正文" in html
     assert card.url == (source_url if kind == "system" else main_url)
-    assert main_url in card.text  # Rendering never rewrites original source data.
     if kind == "quote":
         assert '<aside class="quote">' in html and "Quoted body" in html
         assert card.quote["url"] == quoted_url
+
+
+@pytest.mark.parametrize("kind", ["tweet", "quote", "system"])
+def test_image_body_preserves_urls_and_following_chinese_text(kind):
+    from html import escape
+
+    text = "详情见 https://example.com/test，然后继续 & <原文>"
+    translation = "译文见 https://example.com/translation，然后继续 & <译文>"
+    card = NoticeCard("Title", text, translation, tweet=kind != "system")
+    if kind == "quote":
+        card.quote = {"text": text}
+        card.quote_translation = translation
+    html = build_card_html(card, NOW)
+    count = 2 if kind == "quote" else 1
+    assert html.count(f'<div class="body en" lang="en">{escape(text)}</div>') == count
+    assert (
+        html.count(f'<div class="body zh" lang="zh">{escape(translation)}</div>')
+        == count
+    )
+    assert html.index(escape(translation)) < html.index(escape(text))
 
 
 @pytest.mark.parametrize("mode", ["text", "image"])
