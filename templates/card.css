@@ -1,18 +1,19 @@
 * { box-sizing: border-box; }
-@font-face { font-family: "Card Latin"; src: url("__LATIN_FONT__") format("truetype"); font-style: normal; font-weight: 400; font-display: block; }
-html, body { margin: 0; color: #24272c; font-family: "Noto Sans CJK SC", "Microsoft YaHei", "PingFang SC", Arial, sans-serif; }
+@font-face { font-family: "Watcher Sans SC"; src: url("__CARD_FONT__") format("woff2"); font-style: normal; font-weight: 400 600; font-display: block; }
+@font-face { font-family: "Watcher Sans SC"; src: url("__LATIN_FONT__") format("woff2"); font-style: normal; font-weight: 400 600; font-display: block; unicode-range: U+0020-024F, U+0370-052F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF; }
+html, body { margin: 0; color: #24272c; font-family: "Watcher Sans SC", "Noto Sans CJK SC", "Microsoft YaHei", "PingFang SC", Arial, sans-serif; font-weight: 400; }
 #capture { width: 1240px; padding: 24px; background: #edf0f3; }
 .card { background: #fff; border-radius: 22px; padding: 30px; box-shadow: 0 8px 24px #20273505; }
-.notice-title { font-size: 22px; font-weight: 650; margin-bottom: 26px; color: #535b65; }
+.notice-title { font-size: 22px; font-weight: 600; margin-bottom: 26px; color: #535b65; }
 .content.with-quote { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.35fr); gap: 26px; }
 header, .quote-head { display: flex; align-items: center; gap: 14px; margin-bottom: 28px; }
 .avatar { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; }
-strong { font-size: 23px; font-weight: 700; }
-.handle { display: block; font-size: 18px; color: #858b94; margin-top: 3px; }
+strong { font-size: 23px; font-weight: 600; }
+.handle { display: block; font-size: 18px; color: #858b94; margin-top: 3px; font-weight: 400; }
 .x-mark { margin-left: auto; font-family: Arial, sans-serif; font-size: 32px; }
-.body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 27px; line-height: 1.6; }
+.body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 27px; line-height: 1.6; font-weight: 400; }
 .body + .body { margin-top: 25px; }
-.body.en { color: #33383e; font-family: "Card Latin", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; }
+.body.en { color: #33383e; font-family: inherit; }
 .quote { background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 16px; padding: 22px; min-width: 0; }
 .quote .body { font-size: 25px; }
 .quote-head { gap: 10px; margin-bottom: 24px; }
@@ -21,7 +22,7 @@ strong { font-size: 23px; font-weight: 700; }
 .quote-avatar { width: 38px; height: 38px; }
 .quote-label { margin-left: auto; align-self: flex-start; font-size: 15px; color: #969ca5; }
 footer { border-top: 1px solid #e4e7eb; display: flex; align-items: center; gap: 15px; margin-top: 28px; padding-top: 19px; color: #818892; }
-time { font-family: "DejaVu Sans Mono", Consolas, monospace; font-size: 20px; }
+time { font-family: inherit; font-size: 20px; font-weight: 400; }
 .timezone { border: 1px solid #e2e5e9; border-radius: 4px; padding: 4px 9px; font-size: 17px; color: #9aa1ab; }
 .system-symbol { width: 52px; height: 52px; display: grid; place-items: center; border: 1px solid #e3e6eb; border-radius: 14px; font-size: 28px; }
 .system-body { border-left: 3px solid #d6dce3; padding-left: 22px; }

@@ -8,9 +8,13 @@
 仅修复 self-reply 过滤、quote 独立 enrichment、图片隐藏 URL。字体文件和
 整体视觉样式保持不变；CSS 只删除不再使用的 `.source`。
 
-本轮最小 review fix 基于 `c8d96bdf07127405de53a92b9e8dcd02ff07879e`，
+此前最小 review fix 基于 `c8d96bdf07127405de53a92b9e8dcd02ff07879e`，
 取消正文和译文的 URL 正则清洗，保留原文中的网址及其后紧跟的中文标点和正文。
 独立来源 URL 仍不展示；字体、布局、颜色及文字回退保持不变。
+
+本轮 typography 调整基于 `bedba78af09e87fa8196aa1a6936b81f919cc281`。
+只更新本地字体资产、字体 data URL 和 CSS 字族/字重；不改 HTML 模板结构、
+卡片宽度/左右栏、字号、行高、间距、颜色、通知逻辑或配置。
 
 ## 路由与状态
 
@@ -39,10 +43,17 @@
 `notice_card.py` 负责结构化内容、HTML escaping 和截图；`templates/tweet.html` /
 `templates/system.html` 共用 `card.css`。截图为本地 HTML，经 SDK
 `ctx.render.html2png`，1240px 视口、2 倍像素密度、`#capture` 元素全高截图。
-依赖 Host 提供本地浏览器和可用中文字体；缺少能力/依赖时自动文字回退。
+依赖 Host 提供本地浏览器；常用中英文字体随插件打包，不再依赖 Host 中文 fallback。
+缺少渲染能力/依赖时自动文字回退。
 插件运行本身没有新增 Python 第三方依赖。
 
 所有文本 HTML 转义，头像打包为 data URL，`allow_network=false`，渲染不加载远程资源。
+字体同样以 data URL 嵌入。CSS 字族 `Watcher Sans SC` 使用 Noto Sans SC 的广覆盖
+基本汉字子集，配合 Noto Sans 拉丁子集，保持英文弯引号为自然的比例宽度。
+两者都是 400–600 可变 WOFF2：正文/账号/时间 400，标题/姓名 600。
+没有调整字号、行高或布局；字体度量改变会使自适应截图高度和换行略有变化。
+覆盖范围、许可、资产体积、固定上游 SHA 及重建命令见
+[字体归属说明](../templates/assets/ATTRIBUTION.md)。
 同一管线只生成一次图供各群使用。Host 渲染预算 15 秒，调用外层预算 20 秒。
 异常、超时、空/非法 PNG 结果、无法解析群会话、发图返回失败/抛异常均进入该群文字回退。
 图片成功不发文字；回退文字成功即落正常 receipt，不再补图；两者都失败不落 receipt。
@@ -75,9 +86,12 @@ ruff format --check .
 git diff --check
 ```
 
-`test_card_browser.py` 为可选开发验证，需在开发环境安装 Playwright、Chromium 和中文字体。
+`test_card_browser.py` 为可选开发验证，需在开发环境安装 Playwright 和 Chromium。
 测试用真实 Chromium 验证普通/引用/系统/长文模板截图、完整高度、无水平溢出、头像加载、
 日期、整块译文顺序以及无外部请求。它不连接 QQ，也不读生产配置/状态。
+本轮还通过 Chromium 的实际 glyph 字体报告确认中英文和 footer 使用嵌入字体，
+检查 400/600 字重及英文标点使用 Latin face。`test_card_font.py` 使用开发环境
+FontTools 审计全部 6,763 个 GB2312 汉字、基本汉字区、ASCII、标点和变量字重范围。
 
 上一轮结果：原有 243 项与新增 56 项离线测试通过，4 项真实 Chromium 截图测试通过，
 合计 **303 passed**。Ruff 与 diff 空白检查通过。默认路径只更新配置升级测试中的
@@ -90,10 +104,16 @@ quote-only 或失败 Provider、文字模式请求数、三类图片无独立来
 targeted 子集 **27 passed**；仓库级 Ruff、format 和 diff 检查通过。
 预览使用原有工具重生成，未向任何 QQ 群发送。
 
-本轮新增 3 个正文 URL 保留回归用例，覆盖 Tweet、quote、系统卡片及译文，
+此前 URL 修复新增 3 个正文 URL 保留回归用例，覆盖 Tweet、quote、系统卡片及译文，
 同时保留 3 类独立来源 URL 不展示的断言。完整 pytest **333 passed**，
 正文/来源 URL 与文字回退 targeted 子集 **10 passed**，独立真实 Chromium
 截图测试 **4 passed**；Ruff、format 和 diff 检查通过。未发送真实 QQ 消息。
+
+本轮 typography 验证：完整 pytest **335 passed**，包含 4 项真实 Chromium
+截图测试及 1 项广覆盖字体资产审计；单独运行 Chromium + 字体审计 **5 passed**。
+Ruff、format、diff 检查通过。额外核对受保护文件与基线字节一致、非 typography
+CSS 属性完全不变，`render_card`、正文 escaping 和卡片数据模型未改。
+只生成本地预览，没有生产部署或 QQ 实发。
 
 预览复现：
 
@@ -104,6 +124,7 @@ python tools/preview_cards.py --output docs/preview
 演示译文用于视觉 review；生产翻译仍由 Host LLM 完成。
 预览：[引用 Tweet](preview/tweet-quote.png) / [普通 Tweet](preview/tweet.png) /
 [系统通知](preview/system.png)。未向测试群或其它群真实发送。
+字体 before / after：[同环境对比](preview/typography.md)。
 
 ## 已知边界
 
@@ -114,7 +135,8 @@ python tools/preview_cards.py --output docs/preview
    等待后续数据修复。
 3. 翻译/正文补全失败会保留可得原文；文字模式与文字回退保留来源链接，图片不独立显示来源链接。
    不猜测引用正文，不展示失败占位块。
-   Host 的浏览器/字体不同可能改变换行；本地预览已用中文字体检查。
+   常用中英文使用打包字体；罕见扩展汉字、emoji 和其它文字仍可能使用 Host fallback。
+   浏览器版本和光栅化差异仍可能影响实际显示；本轮只做本地 Chromium 验证。
 4. 发送成功后落盘仍沿用项目 at-least-once 边界。平台已接受但 RPC 超时、进程在成功
    后落盘前退出等情况无法严格保证 exactly-once；发图异常按要求回退文字也受这一平台边界影响。
 5. 本轮验证是离线 fake QQ + 本地真实浏览器截图，没有生产 Host/NapCat/QQ 实发证据。

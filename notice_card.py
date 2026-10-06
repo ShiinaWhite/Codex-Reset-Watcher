@@ -86,10 +86,17 @@ def build_card_html(card: NoticeCard, now: datetime) -> str:
         css=(TEMPLATES / "card.css")
         .read_text(encoding="utf-8")
         .replace(
-            "__LATIN_FONT__",
-            "data:font/ttf;base64,"
+            "__CARD_FONT__",
+            "data:font/woff2;base64,"
             + base64.b64encode(
-                (TEMPLATES / "assets/noto-sans.ttf").read_bytes()
+                (TEMPLATES / "assets/watcher-sans-sc.woff2").read_bytes()
+            ).decode(),
+        )
+        .replace(
+            "__LATIN_FONT__",
+            "data:font/woff2;base64,"
+            + base64.b64encode(
+                (TEMPLATES / "assets/watcher-sans-latin.woff2").read_bytes()
             ).decode(),
         ),
         title=escape(card.title),

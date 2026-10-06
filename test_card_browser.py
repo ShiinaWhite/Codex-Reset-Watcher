@@ -22,8 +22,8 @@ def test_real_local_screenshot_and_layout(tmp_path, kind):
     now = datetime(2026, 10, 4, 20, 33, tzinfo=timezone.utc)
     card = NoticeCard(
         "Tibo 动态" if kind != "system" else "Codex Banked Reset 提醒",
-        "English first paragraph.\n\nEnglish second paragraph.",
-        "中文第一段。\n\n中文第二段。",
+        "English first paragraph: we’ll ship improvements.\n\nEnglish second paragraph.",
+        "中文第一段：额度重置、银行监测、自己续帖。\n\n中文第二段：镕喆囧龘。",
         url="https://codex-reset.com/banked-reset"
         if kind == "system"
         else "https://x.com/thsottiaux/status/123",
@@ -76,6 +76,37 @@ def test_real_local_screenshot_and_layout(tmp_path, kind):
                 assert await page.locator(".quote").count() == int(kind == "quote")
                 assert await page.locator(".timezone").inner_text() == "UTC+8"
                 assert await page.locator("time").inner_text() == "2026-10-05 04:33"
+                # Verify actual glyph usage, not merely a declared CSS family:
+                # Chinese/Latin must render with the same embedded font offline.
+                session = await page.context.new_cdp_session(page)
+                await session.send("DOM.enable")
+                await session.send("CSS.enable")
+                root = (await session.send("DOM.getDocument"))["root"]["nodeId"]
+                selectors = [".notice-title", ".body.zh", ".body.en", "time"]
+                if card.quote:
+                    selectors.extend([".quote .body.zh", ".quote .body.en"])
+                for selector in selectors:
+                    node = await session.send(
+                        "DOM.querySelector", {"nodeId": root, "selector": selector}
+                    )
+                    fonts = (
+                        await session.send(
+                            "CSS.getPlatformFontsForNode", {"nodeId": node["nodeId"]}
+                        )
+                    )["fonts"]
+                    assert fonts and all(
+                        f["isCustomFont"] and f["familyName"] == "Watcher Sans SC"
+                        for f in fonts
+                    ), (selector, fonts)
+                    if selector.endswith(".en") or selector == "time":
+                        assert all(
+                            f["postScriptName"] == "WatcherSansSC-Latin" for f in fonts
+                        ), (selector, fonts)
+                    weight = await page.locator(selector).first.evaluate(
+                        "e => getComputedStyle(e).fontWeight"
+                    )
+                    assert weight == ("600" if selector == ".notice-title" else "400")
+                await session.detach()
                 # Whole translations form contiguous blocks in every body.
                 primary = page.locator(".primary" if card.tweet else ".system-body")
                 zh = await primary.locator(".zh").bounding_box()

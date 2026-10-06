@@ -95,11 +95,13 @@ model_task = "replyer"    # WebUI 推荐选择：replyer / planner / utils
 - 系统模板：明确显示“系统 / 上游通知”，不显示 Tibo 账号或头像。无发布时间时使用本次生成时间。
 - 引用帖：有引用正文才显示独立引用区；引用也整块翻译，译文在原文之上。主帖正文与引用正文独立选择，已取得的引用正文不会随主帖候选切换而丢失；图片模式可继续下一级 Provider 补引用，文字模式不为引用额外等待。引用正文缺失时完全隐藏引用区，暂不处理引用媒体。
 - 图片不独立展示主帖、系统来源及引用帖的来源 URL；正文和译文中本来存在的网址正常保留，内部来源元数据保留。文字模式及图片失败后的文字回退继续保留原有来源链接。
+- 图片中英文字体使用本地打包的 Noto Sans SC / Noto Sans WOFF2 子集，统一 CSS 字族，覆盖全部 GB2312 常用汉字及更广的基本汉字区；标题和姓名为 600，正文、账号与时间为 400。无需 CDN，字体许可、体积及构建方法见 [字体归属说明](templates/assets/ATTRIBUTION.md)。
 - 翻译失败或禁用时保留原文，告警本身继续投递。浏览器、字体或 Host 渲染能力缺失时回退文字。
 
 这是 dev 待 review 的功能，插件 Release 版本仍保持 0.1.13；配置结构版本为 1.3.0，使 Host 重建配置时补充新项并保留原值。没有修改生产配置或生产状态。
 
 本地 HTML 截图预览（演示文案，未向 QQ 发送）：[带引用的 Tweet](docs/preview/tweet-quote.png)、[普通 Tweet](docs/preview/tweet.png)、[系统通知](docs/preview/system.png)。实现、验证方式及边界见 [开发验证说明](docs/dev-tibo-image.md)。
+本轮字体调整的同环境 before / after 对比见 [Typography 预览](docs/preview/typography.md)。
 
 ## 多群支持
 
