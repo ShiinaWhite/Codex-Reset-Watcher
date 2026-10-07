@@ -35,8 +35,10 @@ feed fallback 支持相同结构；本次真实 feed 不含 poll，fallback 回�
 基于真实 Fx 结构构造的测试变体，不声称它来自本次 feed 响应。
 
 至少两个有效选项展示 poll；选项不足只显示“投票内容暂不可用”，其中 Vote / 投票占位正文
-被隐藏。完全无法确认 poll 时维持普通 quote 正文。投票选项译文在原文之上，数字、
-票数、状态和截止时间不进入 LLM；译文失败、重复、丢失原始 emoji 时保留原文。
+被隐藏。完全无法确认 poll 时维持普通 quote 正文。每个投票选项首行显示原文及括号内中文译文，
+例如 `🤌 good day（美好的一天）`；原文大小写保持上游原样，emoji 只显示一次。
+次行显示比例条与一位小数百分比，比例条保留原始快照精度；底部票数、状态和截止时间保持不变。
+数字、票数、状态和截止时间不进入 LLM；译文失败、重复或为空时只展示原文，不留空括号。
 整个选项翻译共用已有配置的翻译时间预算，无新增配置。普通 quote、文字模式和文字 fallback
 的来源链接与发送行为保持不变。
 
@@ -56,3 +58,7 @@ fixture，硬限制测试群 `611817038`；正式 Watcher 与其两群不参与�
 **131 passed**；真实 Chromium **6 passed**；Ruff、format、diff 检查通过。
 在用户目录补齐 Chromium 所需 NSS/NSPR/ALSA 运行库和与 Host 一致的 Noto Color Emoji
 fallback，未更换插件字体资产或改动生产环境。
+
+选项合行展示的后续验证：完整 pytest **369 passed**；投票 targeted **32 passed**；
+真实 Chromium **6 passed**，并校验中英标签同一行、比例条及百分比在下一行、emoji 不重复。
+Ruff、format、diff 检查通过；本地重新生成投票预览，未操作生产或发送 QQ 消息。

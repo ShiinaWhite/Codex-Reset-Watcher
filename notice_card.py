@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import math
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from html import escape
@@ -46,6 +47,33 @@ def _avatar() -> str:
     return f"data:image/jpeg;base64,{data}"
 
 
+def _poll_option_label(label: str, translation: str) -> str:
+    """Keep the original label intact; avoid repeated emoji and outer brackets."""
+    symbols = {c for c in label if unicodedata.category(c) == "So"}
+
+    def caption(value: str) -> str:
+        value = "".join(
+            c
+            for c in value
+            if c not in symbols
+            and c not in "\ufe0e\ufe0f\u200d"
+            and not "\U0001f3fb" <= c <= "\U0001f3ff"
+        ).strip()
+        if (value.startswith("（") and value.endswith("）")) or (
+            value.startswith("(") and value.endswith(")")
+        ):
+            value = value[1:-1].strip()
+        return value
+
+    translated = caption(translation)
+    suffix = (
+        f'<span class="poll-translation" lang="zh">（{escape(translated)}）</span>'
+        if translated and translated.casefold() != caption(label).casefold()
+        else ""
+    )
+    return f'<span lang="en">{escape(label)}</span>' + suffix
+
+
 def _poll_html(poll: dict, now: datetime) -> str:
     """Render normalized enrichment data only; never infer a viewer selection."""
     options = poll.get("options") or []
@@ -55,18 +83,15 @@ def _poll_html(poll: dict, now: datetime) -> str:
     for option in options:
         label = str(option["label"])
         translated = str(option.get("translation") or "")
-        labels = (
-            f'<span class="poll-translation" lang="zh">{escape(translated)}</span>'
-            if translated.strip() and translated.strip() != label.strip()
-            else ""
-        ) + f'<span lang="en">{escape(label)}</span>'
+        labels = _poll_option_label(label, translated)
         percentage = option.get("percentage")
-        amount = f"{percentage:g}%" if percentage is not None else "—"
+        amount = f"{percentage:.1f}%" if percentage is not None else "—"
         width = f"{percentage:g}" if percentage is not None else "0"
         rows.append(
-            '<div class="poll-option"><div class="poll-option-head">'
-            f'<div class="poll-label">{labels}</div><span class="poll-percentage">{amount}</span></div>'
-            f'<div class="poll-track"><div class="poll-bar" style="width:{width}%"></div></div></div>'
+            '<div class="poll-option">'
+            f'<div class="poll-label">{labels}</div><div class="poll-result">'
+            f'<div class="poll-track"><div class="poll-bar" style="width:{width}%"></div></div>'
+            f'<span class="poll-percentage">{amount}</span></div></div>'
         )
     details = []
     total = poll.get("total_votes")

@@ -104,6 +104,24 @@ def test_real_local_screenshot_and_layout(tmp_path, kind):
                     assert await page.locator(".poll-option").count() == 2
                     assert "74,565 票" in visible and "✓" not in visible
                     assert ("进行中" if kind == "active-poll" else "已结束") in visible
+                    captions = [
+                        "👌(good day)（美好的一天）",
+                        "🫨 (needs a reset)（需要重置）",
+                    ]
+                    for i, caption in enumerate(captions):
+                        label = page.locator(".poll-label").nth(i)
+                        assert await label.inner_text() == caption
+                        original = await label.locator('[lang="en"]').bounding_box()
+                        translation = await label.locator('[lang="zh"]').bounding_box()
+                        assert abs(original["y"] - translation["y"]) < 1
+                        result = (
+                            await page.locator(".poll-result").nth(i).bounding_box()
+                        )
+                        assert result["y"] >= original["y"] + original["height"]
+                        assert (
+                            await page.locator(".poll-percentage").nth(i).inner_text()
+                            == f"{[24, 76][i]:.1f}%"
+                        )
                     for i, percentage in enumerate([24, 76]):
                         track = await page.locator(".poll-track").nth(i).bounding_box()
                         bar = await page.locator(".poll-bar").nth(i).bounding_box()

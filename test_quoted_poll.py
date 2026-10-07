@@ -55,8 +55,8 @@ def test_real_fx_schema_and_snapshot_no_viewer_selection(monkeypatch):
     assert poll["ends_at"] == "2026-10-07T00:58:03+00:00"
     html = build_card_html(card(q), NOW)
     for text in [
-        "24%",
-        "76%",
+        "24.0%",
+        "76.0%",
         "74,565 票",
         "已结束",
         "10-07 04:58",
@@ -78,7 +78,7 @@ def test_real_vx_schema_is_older_snapshot_with_unknown_end():
     assert poll["total_votes"] == 4012  # Explicitly derived from all option counts.
     assert poll["closed"] is None and poll["ends_at"] is None
     html = build_card_html(card(q), NOW)
-    assert "4,012 票" in html and "状态未知" in html and "24.65%" in html
+    assert "4,012 票" in html and "状态未知" in html and "24.6%" in html
     assert "✓" not in html
     merged = module._merge_quote(q, quoted())
     assert merged["poll"] == quoted()["poll"]  # Atomic Fx snapshot, not mixed values.
@@ -226,7 +226,7 @@ def test_option_translation_is_optional_and_never_rewrites_statistics(
     )
     html = build_card_html(rendered, NOW)
     assert "👌(good day)" in html and "🫨 (needs a reset)" in html
-    assert "24%" in html and "76%" in html and "74,565 票" in html
+    assert "24.0%" in html and "76.0%" in html and "74,565 票" in html
     assert ("美好的一天" in html) is (translation == "success")
     assert "Vote" in inputs and all(
         "74565" not in text and "ends_at" not in text for text in inputs
@@ -334,3 +334,41 @@ def test_all_providers_fail_but_real_schema_feed_fallback_keeps_poll(
     item["quote"] = payload("fxtwitter")["tweet"]["quote"]
     result = asyncio.run(p._enrich_content(ID, feed(item)))
     assert result.source == "feed" and result.quote["poll"] == quoted()["poll"]
+
+
+@pytest.mark.parametrize(
+    "label, translation, expected",
+    [
+        ("🤌 good day", "🤌（美好的一天）", "🤌 good day（美好的一天）"),
+        ("👌(Good Day)", "👌（美好的一天）", "👌(Good Day)（美好的一天）"),
+        ("🫨 Needs a Reset", "🫨 (需要重置)", "🫨 Needs a Reset（需要重置）"),
+        ("👌🏽 good day", "👌🏽（很好）", "👌🏽 good day（很好）"),
+        ("👩‍💻 Good Day", "👩‍💻（美好的一天）", "👩‍💻 Good Day（美好的一天）"),
+        ("Good Day", "", "Good Day"),
+        ("Good Day", "（）", "Good Day"),
+        ("👌 Good Day", "👌", "👌 Good Day"),
+        ("已经很好👌", "已经很好👌", "已经很好👌"),
+    ],
+)
+def test_option_single_caption_preserves_original_case_and_one_emoji(
+    label, translation, expected
+):
+    from html import unescape
+    import re
+    from notice_card import _poll_option_label
+
+    html = _poll_option_label(label, translation)
+    visible = unescape(re.sub(r"<[^>]*>", "", html))
+    assert visible == expected
+    assert "（（））" not in visible
+
+
+def test_percentage_has_one_decimal_but_bar_preserves_snapshot_precision():
+    q = quoted()
+    q["poll"]["options"][0]["percentage"] = 24.64
+    q["poll"]["options"][1]["percentage"] = 75.36
+    html = build_card_html(card(q), NOW)
+    assert ">24.6%</span>" in html and ">75.4%</span>" in html
+    assert "width:24.64%" in html and "width:75.36%" in html
+    assert 'class="poll-option-head"' not in html
+    assert html.index('class="poll-track"') < html.index('class="poll-percentage"')
