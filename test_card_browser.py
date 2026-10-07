@@ -5,7 +5,7 @@ Install Playwright and Chromium/fonts, then explicitly run this file.
 
 import asyncio
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -14,7 +14,9 @@ from notice_card import NoticeCard, render_card
 pytest.importorskip("playwright.async_api")
 
 
-@pytest.mark.parametrize("kind", ["tweet", "quote", "system", "long"])
+@pytest.mark.parametrize(
+    "kind", ["tweet", "quote", "system", "long", "poll", "active-poll"]
+)
 def test_real_local_screenshot_and_layout(tmp_path, kind):
     from playwright.async_api import async_playwright
     from types import SimpleNamespace
@@ -39,6 +41,21 @@ def test_real_local_screenshot_and_layout(tmp_path, kind):
     if kind == "long":
         card.text = "Long note paragraph.\n" * 160
         card.translation = "这是长文中的一段，完整呈现。\n" * 160
+
+    if kind in {"poll", "active-poll"}:
+        import json
+        from pathlib import Path
+
+        values = json.loads(
+            (Path(__file__).parent / "tests/fixtures/quoted-poll/card.json").read_text()
+        )
+        values["published_at"] = datetime.fromisoformat(values["published_at"])
+        card = NoticeCard(**values)
+        now = datetime(2026, 10, 7, 5, tzinfo=timezone.utc)
+        if kind == "active-poll":
+            card.quote["poll"].update(
+                closed=False, ends_at=(now + timedelta(hours=3)).isoformat()
+            )
 
     async def scenario():
         async with async_playwright() as p:
@@ -73,9 +90,32 @@ def test_real_local_screenshot_and_layout(tmp_path, kind):
                 assert card.url not in visible
                 if card.quote:
                     assert card.quote["url"] not in visible
-                assert await page.locator(".quote").count() == int(kind == "quote")
+                assert await page.locator(".quote").count() == int(
+                    kind in {"quote", "poll", "active-poll"}
+                )
                 assert await page.locator(".timezone").inner_text() == "UTC+8"
-                assert await page.locator("time").inner_text() == "2026-10-05 04:33"
+                expected_time = (
+                    "2026-10-07 05:07"
+                    if kind in {"poll", "active-poll"}
+                    else "2026-10-05 04:33"
+                )
+                assert await page.locator("time").inner_text() == expected_time
+                if kind in {"poll", "active-poll"}:
+                    assert await page.locator(".poll-option").count() == 2
+                    assert "74,565 票" in visible and "✓" not in visible
+                    assert ("进行中" if kind == "active-poll" else "已结束") in visible
+                    for i, percentage in enumerate([24, 76]):
+                        track = await page.locator(".poll-track").nth(i).bounding_box()
+                        bar = await page.locator(".poll-bar").nth(i).bounding_box()
+                        assert (
+                            abs(bar["width"] / track["width"] * 100 - percentage) < 0.1
+                        )
+                    assert (
+                        await page.locator(".content.with-quote").evaluate(
+                            "e => getComputedStyle(e).display"
+                        )
+                        == "grid"
+                    )
                 # Verify actual glyph usage, not merely a declared CSS family:
                 # Chinese/Latin must render with the same embedded font offline.
                 session = await page.context.new_cdp_session(page)

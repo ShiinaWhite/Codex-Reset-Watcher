@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from html import escape
@@ -45,12 +46,82 @@ def _avatar() -> str:
     return f"data:image/jpeg;base64,{data}"
 
 
+def _poll_html(poll: dict, now: datetime) -> str:
+    """Render normalized enrichment data only; never infer a viewer selection."""
+    options = poll.get("options") or []
+    if len(options) < 2:
+        return '<div class="poll poll-unavailable">投票内容暂不可用</div>'
+    rows = []
+    for option in options:
+        label = str(option["label"])
+        translated = str(option.get("translation") or "")
+        labels = (
+            f'<span class="poll-translation" lang="zh">{escape(translated)}</span>'
+            if translated.strip() and translated.strip() != label.strip()
+            else ""
+        ) + f'<span lang="en">{escape(label)}</span>'
+        percentage = option.get("percentage")
+        amount = f"{percentage:g}%" if percentage is not None else "—"
+        width = f"{percentage:g}" if percentage is not None else "0"
+        rows.append(
+            '<div class="poll-option"><div class="poll-option-head">'
+            f'<div class="poll-label">{labels}</div><span class="poll-percentage">{amount}</span></div>'
+            f'<div class="poll-track"><div class="poll-bar" style="width:{width}%"></div></div></div>'
+        )
+    details = []
+    total = poll.get("total_votes")
+    if total is not None:
+        details.append(f"{total:,} 票")
+    ends_at = None
+    try:
+        value = poll.get("ends_at")
+        if value:
+            ends_at = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if not ends_at.tzinfo:
+                ends_at = None
+    except (TypeError, ValueError):
+        pass
+    closed = poll.get("closed")
+    if ends_at and ends_at <= now:
+        closed = True
+    if closed is True:
+        details.append("已结束")
+    elif closed is False or (ends_at and ends_at > now):
+        details.append("进行中")
+        if ends_at:
+            minutes = max(1, math.ceil((ends_at - now).total_seconds() / 60))
+            details.append(
+                f"剩余 {math.ceil(minutes / 60)} 小时"
+                if minutes >= 60
+                else f"剩余 {minutes} 分钟"
+            )
+    else:
+        details.append("状态未知")
+    if ends_at:
+        details.append(
+            "截止 "
+            + ends_at.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M")
+            + " UTC+8"
+        )
+    return (
+        '<section class="poll">'
+        + "".join(rows)
+        + f'<div class="poll-footer">{escape(" · ".join(details))}</div></section>'
+    )
+
+
 def build_card_html(card: NoticeCard, now: datetime) -> str:
     """No external assets, scripts or quote placeholders; all source text escaped."""
     moment = (card.published_at or now).astimezone(ZoneInfo("Asia/Shanghai"))
     quote_html = ""
     quote = card.quote
-    if card.tweet and isinstance(quote, dict) and str(quote.get("text") or "").strip():
+    if (
+        card.tweet
+        and isinstance(quote, dict)
+        and (
+            str(quote.get("text") or "").strip() or isinstance(quote.get("poll"), dict)
+        )
+    ):
         author = quote.get("author") if isinstance(quote.get("author"), dict) else {}
         name = str(author.get("name") or "")
         handle = str(author.get("screen_name") or author.get("handle") or "")
@@ -74,12 +145,21 @@ def build_card_html(card: NoticeCard, now: datetime) -> str:
                 ).strftime("%m-%d %H:%M")
         except (ValueError, TypeError, KeyError, OverflowError):
             pass
+        poll = quote.get("poll") if isinstance(quote.get("poll"), dict) else None
+        body = _body(str(quote.get("text") or ""), card.quote_translation)
+        if (
+            poll is not None
+            and len(poll.get("options") or []) < 2
+            and str(quote.get("text") or "").strip().casefold() in {"vote", "投票"}
+        ):
+            body = ""
         quote_html = (
             '<aside class="quote">'
             f'<div class="quote-head">{avatar}<div><strong>{escape(name)}</strong>'
             f'<span class="handle">{escape("@" + handle if handle else "")}</span></div>'
             f'<span class="quote-label">Quote<span class="handle">{quote_time}</span></span></div>'
-            + _body(str(quote["text"]), card.quote_translation)
+            + body
+            + (_poll_html(poll, now) if poll is not None else "")
             + "</aside>"
         )
     values = dict(

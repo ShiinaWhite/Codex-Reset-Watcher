@@ -1,0 +1,85 @@
+{
+  "title": "Tibo 动态",
+  "text": "Four updates or a reset. Or both. How was day 2.",
+  "translation": "四次更新，或者一次重置。或者两者都要。第二天过得怎么样？",
+  "url": "https://x.com/thsottiaux/status/2107578625419866469",
+  "published_at": "2026-10-06T21:07:55+00:00",
+  "tweet": true,
+  "quote": {
+    "url": "https://x.com/thsottiaux/status/2107576143285219799",
+    "id": "2107576143285219799",
+    "text": "Vote",
+    "raw_text": {
+      "text": "Vote",
+      "display_text_range": [
+        0,
+        4
+      ],
+      "facets": []
+    },
+    "author": {
+      "screen_name": "thsottiaux",
+      "url": "https://x.com/thsottiaux",
+      "id": "1953337039510003712",
+      "followers": 810011,
+      "following": 75,
+      "likes": 10358,
+      "media_count": 148,
+      "name": "Tibo",
+      "description": "Codex & ChatGPT @OpenAI",
+      "raw_description": {
+        "text": "Codex & ChatGPT @OpenAI",
+        "facets": []
+      },
+      "location": "",
+      "banner_url": "",
+      "avatar_url": "https://pbs.twimg.com/profile_images/2093807917833281537/2yBgpwVV_200x200.jpg",
+      "joined": "Thu Aug 07 06:07:07 +0000 2025",
+      "protected": false,
+      "website": null,
+      "verification": {
+        "verified": true,
+        "verified_at": null,
+        "type": "individual"
+      },
+      "avatar_color": null
+    },
+    "replies": 1038,
+    "retweets": 109,
+    "likes": 2337,
+    "bookmarks": 103,
+    "quotes": 219,
+    "created_at": "Tue Oct 06 20:58:04 +0000 2026",
+    "created_timestamp": 1791320284,
+    "views": 1253443,
+    "is_note_tweet": false,
+    "community_note": null,
+    "lang": "fr",
+    "replying_to": "thsottiaux",
+    "replying_to_status": "2107575657014468879",
+    "poll": {
+      "options": [
+        {
+          "label": "👌(good day)",
+          "votes": 17902,
+          "percentage": 24,
+          "translation": "👌（美好的一天）"
+        },
+        {
+          "label": "🫨 (needs a reset)",
+          "votes": 56663,
+          "percentage": 76,
+          "translation": "🫨（需要重置）"
+        }
+      ],
+      "total_votes": 74565,
+      "ends_at": "2026-10-07T00:58:03+00:00",
+      "closed": true
+    },
+    "twitter_card": "tweet",
+    "color": null,
+    "provider": "twitter",
+    "reposted_by": null
+  },
+  "quote_translation": "投票"
+}

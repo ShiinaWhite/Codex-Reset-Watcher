@@ -26,3 +26,14 @@ time { font-family: inherit; font-size: 20px; font-weight: 400; }
 .timezone { border: 1px solid #e2e5e9; border-radius: 4px; padding: 4px 9px; font-size: 17px; color: #9aa1ab; }
 .system-symbol { width: 52px; height: 52px; display: grid; place-items: center; border: 1px solid #e3e6eb; border-radius: 14px; font-size: 28px; }
 .system-body { border-left: 3px solid #d6dce3; padding-left: 22px; }
+
+.poll { margin-top: 24px; }
+.poll-option + .poll-option { margin-top: 18px; }
+.poll-option-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; font-size: 23px; line-height: 1.6; }
+.poll-label { min-width: 0; overflow-wrap: anywhere; }
+.poll-label span { display: block; }
+.poll-percentage { white-space: nowrap; color: #535b65; }
+.poll-track { height: 6px; background: #e5e7eb; border-radius: 4px; margin-top: 7px; overflow: hidden; }
+.poll-bar { height: 100%; background: #858b94; border-radius: inherit; }
+.poll-footer, .poll-unavailable { font-size: 16px; line-height: 1.6; color: #858b94; overflow-wrap: anywhere; }
+.poll-footer { margin-top: 18px; }

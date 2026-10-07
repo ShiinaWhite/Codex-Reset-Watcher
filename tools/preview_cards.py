@@ -7,6 +7,7 @@ Never connects to QQ or reads runtime configuration/state.
 
 import argparse
 import asyncio
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -55,6 +56,13 @@ async def preview(output):
             now,
         ),
     }
+    poll_fixture = json.loads(
+        (
+            Path(__file__).resolve().parents[1] / "tests/fixtures/quoted-poll/card.json"
+        ).read_text(encoding="utf-8")
+    )
+    poll_fixture["published_at"] = datetime.fromisoformat(poll_fixture["published_at"])
+    cards["tweet-quote-poll"] = NoticeCard(**poll_fixture)
     async with async_playwright() as p:
         browser = await p.chromium.launch()
         try:

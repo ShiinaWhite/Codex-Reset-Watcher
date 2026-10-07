@@ -73,6 +73,23 @@
   清除模板 `$source`、`.source`，但保留内部 `NoticeCard.url` 和 provenance。
   文字模式与图片失败后的文字回退保持原有来源链接及原文展示护栏。
 
+## 引用投票补全
+
+基于 `ca679b80674fc8d69603659bc65fcfb2adf10c1e` 增加 quote poll 的结构化补全和展示。
+FxTwitter 的 `quote.poll.choices`、VxTwitter 的 `qrt.pollData.options` 显式归一化，
+feed 同 ID 的 quote 可兜底。主帖候选、引用正文和投票分别补全；投票的数字、状态、
+截止时间整份保留，不混搭不同 Provider 的快照。图片模式可补充下一级 Provider 的 poll，
+文字模式不因此额外等待。
+
+quote 卡内部展示原始问题、选项中文/原文、百分比、比例条、总票数及可靠截止状态。
+选项翻译只传 label，原文与 emoji 保留；翻译异常或预算耗尽仍正常展示原始投票。
+已知 poll 而选项不足时显示“投票内容暂不可用”，不伪造零票或百分比；无法确认 poll 时
+维持普通 quote 行为。未取得可靠 viewer-selection 不显示选中标记。
+
+只新增 poll 区域样式；原有字体资产、字体规则、主卡 HTML 与左右布局保持不变。
+模型数据仅用于 enrichment / presentation，不进入 alert、dedup、receipt、retry 或 state。
+真实取证及 fixtures 来源见 [quoted-poll.md](quoted-poll.md)。
+
 ## 验证与复现
 
 基线套件：243 passed。验证命令（真实 SDK + fake QQ，未真实发消息）：
@@ -134,7 +151,7 @@ python tools/preview_cards.py --output docs/preview
    最近 48h 内尚未见的动态可以补发。上游缺少足以确认动态归属的回复元数据或时间时，
    等待后续数据修复。
 3. 翻译/正文补全失败会保留可得原文；文字模式与文字回退保留来源链接，图片不独立显示来源链接。
-   不猜测引用正文，不展示失败占位块。
+   不猜测引用正文；普通引用缺正文仍隐藏，明确知道是投票但缺选项时只展示克制的投票占位。
    常用中英文使用打包字体；罕见扩展汉字、emoji 和其它文字仍可能使用 Host fallback。
    浏览器版本和光栅化差异仍可能影响实际显示；本轮只做本地 Chromium 验证。
 4. 发送成功后落盘仍沿用项目 at-least-once 边界。平台已接受但 RPC 超时、进程在成功

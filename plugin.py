@@ -228,7 +228,9 @@ import asyncio
 import json
 import logging
 import math
+import re
 import time
+import unicodedata
 from collections.abc import Mapping
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
@@ -1431,18 +1433,144 @@ def _cap_text(text: str) -> str:
     return text[: MAX_TWEET_TEXT_CHARS - 1].rstrip() + "…"
 
 
+def _poll_number(value: Any, *, integer: bool = False) -> int | float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if (isinstance(value, float) and not math.isfinite(value)) or value < 0:
+        return None
+    if integer:
+        return int(value) if value == int(value) else None
+    return value if value <= 100 else None
+
+
+def _normalize_poll(raw: Any) -> dict | None:
+    """Fx choices / Vx options / normalized feed poll; never mix snapshots."""
+    if not isinstance(raw, dict):
+        return None
+    choices = raw.get("choices", raw.get("options", []))
+    options = []
+    if isinstance(choices, list):
+        for item in choices:
+            if not isinstance(item, dict):
+                continue
+            label = item.get("label", item.get("name"))
+            if not isinstance(label, str) or not label.strip():
+                continue
+            options.append(
+                {
+                    "label": label,
+                    "votes": _poll_number(
+                        item.get("count", item.get("votes")), integer=True
+                    ),
+                    "percentage": _poll_number(
+                        item.get("percentage", item.get("percent"))
+                    ),
+                }
+            )
+    if isinstance(choices, list) and len(options) != len(choices):
+        options = []  # A missing option must not look like a complete poll.
+    total = _poll_number(raw.get("total_votes"), integer=True)
+    if (
+        total is None
+        and len(options) >= 2
+        and all(o["votes"] is not None for o in options)
+    ):
+        total = sum(o["votes"] for o in options)
+    for option in options:
+        if option["percentage"] is None and total and option["votes"] is not None:
+            option["percentage"] = _poll_number(option["votes"] / total * 100)
+    ends_at = None
+    value = raw.get("ends_at")
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                ends_at = parsed
+        except ValueError:
+            pass
+    closed = raw.get("closed") if isinstance(raw.get("closed"), bool) else None
+    if closed is None:
+        if raw.get("time_left_en") == "Final results":
+            closed = True
+        elif ends_at is not None:
+            closed = ends_at <= _utcnow()
+    # These public responses contain no viewer selection. Do not infer a checkmark.
+    return {
+        "options": options,
+        "total_votes": total,
+        "ends_at": ends_at.isoformat() if ends_at else None,
+        "closed": closed,
+    }
+
+
 def _quote_from_tweet(tweet: Any) -> dict | None:
-    """Quote availability is independent of the parent tweet's text quality."""
+    """Normalize public quote metadata separately from the parent's body."""
     if isinstance(tweet, dict):
-        for field in ("quote", "quoted_tweet"):
-            quote = tweet.get(field)
+        for field in ("quote", "quoted_tweet", "qrt"):
+            raw = tweet.get(field)
+            if not isinstance(raw, dict):
+                continue
+            quote = dict(raw)
+            if field == "qrt":
+                quote.update(
+                    id=raw.get("tweetID"),
+                    url=raw.get("tweetURL"),
+                    created_timestamp=raw.get("date_epoch"),
+                    author={
+                        "name": raw.get("user_name"),
+                        "screen_name": raw.get("user_screen_name"),
+                    },
+                )
+            poll = _normalize_poll(raw.get("poll", raw.get("pollData")))
+            if poll is not None:
+                quote["poll"] = poll
             if (
-                isinstance(quote, dict)
-                and isinstance(quote.get("text"), str)
-                and quote["text"].strip()
-            ):
+                isinstance(quote.get("text"), str) and quote["text"].strip()
+            ) or poll is not None:
+                if not isinstance(quote.get("text"), str):
+                    quote["text"] = ""
                 return quote
     return None
+
+
+def _poll_complete(quote: dict | None) -> bool:
+    poll = quote.get("poll") if quote else None
+    return bool(
+        isinstance(poll, dict)
+        and poll.get("total_votes") is not None
+        and len(poll.get("options", [])) >= 2
+        and all(o.get("percentage") is not None for o in poll["options"])
+    )
+
+
+def _merge_quote(current: dict | None, candidate: dict | None) -> dict | None:
+    if current is None:
+        return candidate
+    if candidate is None:
+        return current
+    if (
+        current.get("id")
+        and candidate.get("id")
+        and str(current["id"]) != str(candidate["id"])
+    ):
+        return current  # Never attach another Tweet's poll.
+    merged = dict(current)
+    for key, value in candidate.items():
+        if not merged.get(key):
+            merged[key] = value
+
+    # A poll is an atomic snapshot, including its percentages, counts and status.
+    def quality(quote):
+        poll = quote.get("poll") or {}
+        return (
+            _poll_complete(quote),
+            poll.get("closed") is not None,
+            poll.get("total_votes") is not None,
+        )
+
+    if candidate.get("poll") is not None and quality(candidate) > quality(current):
+        merged["poll"] = candidate["poll"]
+    return merged
 
 
 def _content_from_provider_payload(payload: Any, source: str) -> TweetContent | None:
@@ -2806,7 +2934,7 @@ class CodexResetWatcher(MaiBotPlugin):
                     if name == "fxtwitter" and isinstance(payload, dict)
                     else payload
                 )
-                quote = quote or _quote_from_tweet(provider_tweet)
+                quote = _merge_quote(quote, _quote_from_tweet(provider_tweet))
                 content = _content_from_provider_payload(payload, name)
                 if content is None:
                     logger.info(
@@ -2824,8 +2952,14 @@ class CodexResetWatcher(MaiBotPlugin):
                         len(content.text),
                         elapsed,
                     )
-                    if not seek_quote or quote or feed_quote:
-                        best.quote = quote or feed_quote
+                    merged_quote = _merge_quote(quote, feed_quote)
+                    poll_pending = bool(
+                        merged_quote
+                        and not _poll_complete(merged_quote)
+                        and (quote is not None or feed_quote.get("poll") is not None)
+                    )
+                    if not seek_quote or (merged_quote and not poll_pending):
+                        best.quote = merged_quote
                         return best
                 else:
                     logger.info(
@@ -2857,7 +2991,7 @@ class CodexResetWatcher(MaiBotPlugin):
                 "（不展示摘要、不交给 LLM）"
             )
         else:
-            best.quote = quote or feed_quote
+            best.quote = _merge_quote(quote, feed_quote)
             logger.info(
                 "Tweet 全文：采用 provider=%s completeness=%s len=%d",
                 best.source,
@@ -3391,12 +3525,48 @@ class CodexResetWatcher(MaiBotPlugin):
             return self._extract_stream_id(stream)
         return ""
 
+    async def _translate_poll_options(self, poll: dict, source: str) -> dict:
+        """Translate labels only; preserve all numeric fields and original emoji."""
+        result = {**poll, "options": [dict(o) for o in poll["options"]]}
+        if not self.config.llm.enabled:
+            return result
+        try:
+            async with asyncio.timeout(float(self.config.llm.timeout_seconds)):
+                for option in result["options"]:
+                    label = option["label"]
+                    if not re.search(r"[a-zA-Z]", label) or re.search(
+                        r"[\u3400-\u9fff]", label
+                    ):
+                        continue
+                    translated = await self._llm_translate_content(
+                        "", "", "", TweetContent(label, source, "full")
+                    )
+                    symbols = [
+                        c
+                        for c in label
+                        if unicodedata.category(c) == "So" or c in "\ufe0f\u200d"
+                    ]
+                    if (
+                        translated
+                        and translated.strip() != label.strip()
+                        and all(c in translated for c in symbols)
+                    ):
+                        option["translation"] = translated
+        except Exception:
+            logger.info("Poll 选项翻译失败，保留原始投票内容", exc_info=True)
+        return result
+
     async def _notice_card(
         self, title, url, content, translation, at, tweet
     ) -> NoticeCard | None:
         if self.config.watcher.display_mode != "image":
             return None
         quote = content.quote if content is not None and tweet else None
+        if quote and isinstance(quote.get("poll"), dict):
+            quote = dict(quote)
+            quote["poll"] = await self._translate_poll_options(
+                quote["poll"], content.source
+            )
         quote_translation = ""
         if quote:
             quote_content = TweetContent(str(quote["text"]), content.source, "full")
