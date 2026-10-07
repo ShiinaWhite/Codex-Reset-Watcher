@@ -104,9 +104,14 @@ def test_real_local_screenshot_and_layout(tmp_path, kind):
                     assert await page.locator(".poll-option").count() == 2
                     assert "74,565 票" in visible and "✓" not in visible
                     assert ("进行中" if kind == "active-poll" else "已结束") in visible
+                    title = page.locator(".quote-title")
+                    assert await title.inner_text() == "Vote（投票）"
+                    title_en = await title.locator(".en").bounding_box()
+                    title_zh = await title.locator(".zh").bounding_box()
+                    assert abs(title_en["y"] - title_zh["y"]) < 1
                     captions = [
-                        "👌(good day)（美好的一天）",
-                        "🫨 (needs a reset)（需要重置）",
+                        "👌 good day（美好的一天）",
+                        "🫨 needs a reset（需要重置）",
                     ]
                     for i, caption in enumerate(captions):
                         label = page.locator(".poll-label").nth(i)
@@ -141,7 +146,9 @@ def test_real_local_screenshot_and_layout(tmp_path, kind):
                 await session.send("CSS.enable")
                 root = (await session.send("DOM.getDocument"))["root"]["nodeId"]
                 selectors = [".notice-title", ".body.zh", ".body.en", "time"]
-                if card.quote:
+                if kind in {"poll", "active-poll"}:
+                    selectors.extend([".quote-title .zh", ".quote-title .en"])
+                elif card.quote:
                     selectors.extend([".quote .body.zh", ".quote .body.en"])
                 for selector in selectors:
                     node = await session.send(

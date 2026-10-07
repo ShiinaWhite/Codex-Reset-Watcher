@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import math
+import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
@@ -48,7 +49,13 @@ def _avatar() -> str:
 
 
 def _poll_option_label(label: str, translation: str) -> str:
-    """Keep the original label intact; avoid repeated emoji and outer brackets."""
+    """Remove caption wrappers for display only; preserve casing and emoji."""
+    wrapped = re.fullmatch(r"([^\w(（]*)(?:\(([^()]*)\)|（([^（）]*)）)", label)
+    if wrapped:
+        prefix = wrapped[1].strip()
+        label = (prefix + " " if prefix else "") + (
+            wrapped[2] or wrapped[3] or ""
+        ).strip()
     symbols = {c for c in label if unicodedata.category(c) == "So"}
 
     def caption(value: str) -> str:
@@ -171,7 +178,28 @@ def build_card_html(card: NoticeCard, now: datetime) -> str:
         except (ValueError, TypeError, KeyError, OverflowError):
             pass
         poll = quote.get("poll") if isinstance(quote.get("poll"), dict) else None
-        body = _body(str(quote.get("text") or ""), card.quote_translation)
+        text = str(quote.get("text") or "")
+        translation = card.quote_translation
+        body = _body(text, translation)
+        # Only short poll headings are inline; ordinary/long quote bodies retain
+        # whole-translation blocks. Unknown poll placeholders stay hidden below.
+        if (
+            poll is not None
+            and text.strip()
+            and len(text.strip()) + len(translation.strip()) <= 40
+            and "\n" not in text + translation
+            and "\r" not in text + translation
+        ):
+            translated = translation.strip()
+            suffix = (
+                f'<span class="body zh" lang="zh">（{escape(translated)}）</span>'
+                if translated and translated.casefold() != text.strip().casefold()
+                else ""
+            )
+            body = (
+                '<div class="body quote-title">'
+                f'<span class="body en" lang="en">{escape(text)}</span>{suffix}</div>'
+            )
         if (
             poll is not None
             and len(poll.get("options") or []) < 2

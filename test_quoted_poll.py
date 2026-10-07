@@ -225,7 +225,7 @@ def test_option_translation_is_optional_and_never_rewrites_statistics(
         p._notice_card("Tibo 动态", "", c, "主帖", NOW.isoformat(), True)
     )
     html = build_card_html(rendered, NOW)
-    assert "👌(good day)" in html and "🫨 (needs a reset)" in html
+    assert "👌 good day" in html and "🫨 needs a reset" in html
     assert "24.0%" in html and "76.0%" in html and "74,565 票" in html
     assert ("美好的一天" in html) is (translation == "success")
     assert "Vote" in inputs and all(
@@ -340,11 +340,16 @@ def test_all_providers_fail_but_real_schema_feed_fallback_keeps_poll(
     "label, translation, expected",
     [
         ("🤌 good day", "🤌（美好的一天）", "🤌 good day（美好的一天）"),
-        ("👌(Good Day)", "👌（美好的一天）", "👌(Good Day)（美好的一天）"),
+        ("👌(Good Day)", "👌（美好的一天）", "👌 Good Day（美好的一天）"),
         ("🫨 Needs a Reset", "🫨 (需要重置)", "🫨 Needs a Reset（需要重置）"),
         ("👌🏽 good day", "👌🏽（很好）", "👌🏽 good day（很好）"),
         ("👩‍💻 Good Day", "👩‍💻（美好的一天）", "👩‍💻 Good Day（美好的一天）"),
         ("Good Day", "", "Good Day"),
+        ("👌 (good day)", "", "👌 good day"),
+        ("(Good Day)", "很好", "Good Day（很好）"),
+        ("👌（Good Day）", "很好", "👌 Good Day（很好）"),
+        ("Good (day)", "很好", "Good (day)（很好）"),
+        ("👌 (good) (day)", "很好", "👌 (good) (day)（很好）"),
         ("Good Day", "（）", "Good Day"),
         ("👌 Good Day", "👌", "👌 Good Day"),
         ("已经很好👌", "已经很好👌", "已经很好👌"),
@@ -372,3 +377,54 @@ def test_percentage_has_one_decimal_but_bar_preserves_snapshot_precision():
     assert "width:24.64%" in html and "width:75.36%" in html
     assert 'class="poll-option-head"' not in html
     assert html.index('class="poll-track"') < html.index('class="poll-percentage"')
+
+
+@pytest.mark.parametrize(
+    "text, translation",
+    [("Vote", "投票"), ("Day 2", "第二天"), ("Vote", ""), ("Vote", "Vote")],
+)
+def test_short_poll_heading_inline(text, translation):
+    q = quoted()
+    q["text"] = text
+    before = deepcopy(q)
+    rendered = card(q)
+    rendered.quote_translation = translation
+    html = build_card_html(rendered, NOW)
+    expected = f'<span class="body en" lang="en">{text}</span>'
+    if translation and translation != text:
+        expected += f'<span class="body zh" lang="zh">（{translation}）</span>'
+    assert f'<div class="body quote-title">{expected}</div>' in html
+    assert q == before  # Display cleanup never modifies provider snapshot data.
+    assert 'class="poll-footer"' in html
+
+
+@pytest.mark.parametrize(
+    "text, translation, has_poll",
+    [
+        ("A long poll question " * 4, "完整问题译文", True),
+        ("Vote\nNow", "现在\n投票", True),
+        ("Vote", "投票", False),
+    ],
+)
+def test_other_quote_bodies_keep_translation_blocks(text, translation, has_poll):
+    from html import escape
+
+    q = quoted()
+    q["text"] = text
+    if not has_poll:
+        q.pop("poll")
+    rendered = card(q)
+    rendered.quote_translation = translation
+    html = build_card_html(rendered, NOW)
+    assert 'class="body quote-title"' not in html
+    assert f'<div class="body zh" lang="zh">{escape(translation)}</div>' in html
+    assert f'<div class="body en" lang="en">{escape(text)}</div>' in html
+
+
+def test_short_poll_heading_escapes_original_and_translation():
+    q = quoted()
+    q["text"] = "<Vote>"
+    rendered = card(q)
+    rendered.quote_translation = "<投票>"
+    html = build_card_html(rendered, NOW)
+    assert '&lt;Vote&gt;</span><span class="body zh" lang="zh">（&lt;投票&gt;）' in html
