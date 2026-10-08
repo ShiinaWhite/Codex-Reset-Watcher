@@ -1941,7 +1941,14 @@ class CodexResetWatcher(MaiBotPlugin):
 
     def _tibo_inflight(self, tweet_id: str, group_id: str) -> bool:
         item = self._inflight.get(f"tibo:{tweet_id}")
-        return bool(item and group_id in item.get("groups", []))
+        if not item or group_id not in item.get("groups", []):
+            return False
+        delivery_done = item.get("delivery_done")
+        if isinstance(delivery_done, dict):
+            done = delivery_done.get(group_id)
+            return done is not None and not done.is_set()
+        # Legacy/test attempts without per-group completion retain the old gate.
+        return True
 
     @staticmethod
     def _event_tibo_id(event_id: str, source: dict, feed: Any) -> str:

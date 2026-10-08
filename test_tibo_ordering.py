@@ -382,3 +382,121 @@ def test_unknown_time_is_not_registered_as_barrier(tmp_path, monkeypatch, at):
             assert OLD not in _gstate(p, gid)["tibo_seen_ids"]
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("lane", ["route", "push-banked"])
+@pytest.mark.parametrize("g1_success", [False, True])
+def test_finished_group_can_route_while_other_tibo_group_is_sending(
+    tmp_path, monkeypatch, lane, g1_success
+):
+    p = setup(tmp_path, monkeypatch)
+    attempts = []
+    key = f"{module.PUSH_BANKED_KEY_PREFIX}{OLD}"
+    identity = f"banked:{OLD}:announced"
+
+    async def scenario():
+        release, g2_sending = asyncio.Event(), asyncio.Event()
+        first_g1 = True
+
+        async def image(data, stream, **kwargs):
+            nonlocal first_g1
+            gid = stream.removeprefix("qq-group-")
+            attempts.append(gid)
+            if gid == G2:
+                g2_sending.set()
+                await release.wait()
+            if gid == G1 and first_g1:
+                first_g1 = False
+                return {"sent": g1_success}
+            return {"sent": True}
+
+        async def failed_text(*args, **kwargs):
+            return {"sent": False}  # Failed image fallback must not create coverage.
+
+        p.ctx.send.image = image
+        p.ctx.send.text = failed_text
+        payload = feed(OLDER)
+        await p._process_tibo_posts(payload, [G1, G2])
+        attempt = p._inflight[f"tibo:{OLD}"]
+        try:
+            await asyncio.wait_for(g2_sending.wait(), 1)
+            await asyncio.wait_for(attempt["delivery_done"][G1].wait(), 1)
+            assert not attempt["task"].done()
+            assert attempt["delivery_done"][G1].is_set()
+            assert not attempt["delivery_done"][G2].is_set()
+            assert p._tibo_inflight(OLD, G1) is False
+            assert p._tibo_inflight(OLD, G2) is True
+            assert receipts(p, G1) == ({OLD} if g1_success else set())
+            assert not receipts(p, G2)
+            assert key not in _gstate(p, G1).get("push_banked_keys", [])
+            assert key not in _gstate(p, G2).get("push_banked_keys", [])
+
+            if lane == "route":
+                remaining = await asyncio.wait_for(
+                    p._route_tibo_groups([G1], "push_banked_keys", key, identity, OLD),
+                    1,
+                )
+                assert remaining == ([] if g1_success else [G1])
+                for gid in remaining:
+                    assert await p._deliver_notice(
+                        gid,
+                        "push_banked_keys",
+                        key,
+                        identity,
+                        "Banked notice",
+                        source_tweet_id=OLD,
+                    )
+            else:
+                await p._process_push_banked(
+                    {
+                        "alert": {
+                            "id": OLD,
+                            "kind": "banked",
+                            "banked_state": "announced",
+                            "url": OLDER["url"],
+                        }
+                    },
+                    [G1],
+                    payload,
+                )
+                await asyncio.wait_for(p._inflight[key]["task"], 1)
+
+            # Assert takeover/coverage now, before releasing the other group.
+            assert not release.is_set() and not attempt["task"].done()
+            assert attempts.count(G1) == (1 if g1_success else 2)
+            assert attempts.count(G2) == 1
+            assert key in _gstate(p, G1).get("push_banked_keys", [])
+            assert identity in _gstate(p, G1)["delivered_notice_keys"]
+            assert f"tweet:{OLD}" in _gstate(p, G1)["delivered_notice_keys"]
+            assert key not in _gstate(p, G2).get("push_banked_keys", [])
+            assert not _gstate(p, G2).get("delivered_notice_keys")
+            assert receipts(p, G1) == ({OLD} if g1_success else set())
+            assert p._tibo_inflight(OLD, G2) is True
+        finally:
+            release.set()
+            await drain(p)
+
+        assert receipts(p, G2) == {OLD}
+        assert p._tibo_inflight(OLD, G2) is False
+        # After its own success, G2 claims coverage without another QQ send.
+        assert (
+            await p._route_tibo_groups([G2], "push_banked_keys", key, identity, OLD)
+            == []
+        )
+        assert key in _gstate(p, G2).get("push_banked_keys", [])
+        assert attempts.count(G2) == 1
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_tibo_inflight_legacy_and_missing_group_completion(
+    tmp_path, monkeypatch, legacy
+):
+    p = setup(tmp_path, monkeypatch)
+    assert p._tibo_inflight(OLD, G1) is False
+    p._inflight[f"tibo:{OLD}"] = {"groups": [G1]}
+    if not legacy:
+        p._inflight[f"tibo:{OLD}"]["delivery_done"] = {}
+    assert p._tibo_inflight(OLD, G1) is legacy
+    assert p._tibo_inflight(OLD, G2) is False
