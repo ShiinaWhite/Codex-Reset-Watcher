@@ -34,6 +34,9 @@
 - 有明确 source Tweet ID 时，同群动态成功 coverage 才吸收既有通知及对应 revision /
   confirmation；在途只 defer、不记 receipt。取消/失败后原车道可重试。
   没有 Tweet 身份的系统事件独立发送；原车道的判定和默认模式 revision 规则保留。
+- Tibo 全推送并发准备正文/翻译/截图，但逐群按真实 `at` 等待更早在途尝试后投递；
+  失败/取消释放等待，慢群不拖住其它群，跨 polling cycle 也保留屏障。
+  只使用内存事件，不新增 state 字段；[真实反序取证与修复](tibo-ordering.md)。
 - `_delivery_locks` 在每群覆盖发送前重查、发送和 receipt；`_state_lock` 只覆盖
   状态修改/保存，不跨 Provider / LLM / QQ 网络等待。状态仍为 v6，新增字段严格校验，
   旧 v6 无新字段可加载。配置结构升为 1.3.0 以补齐默认项；插件版本未发布变更。

@@ -1,0 +1,33 @@
+{
+  "profile": {
+    "handle": "thsottiaux"
+  },
+  "source_scope": "timeline",
+  "stale": false,
+  "tweets": [
+    {
+      "id": "2107913674593644711",
+      "text": "Day 3/\n\nThe big one is GPT-6 in Chat, but today is also a little celebration day with a new high of 40M active users across Codex and ChatGPT Work.\n\nLoading a banked reset in everyone's paid accounts. See you again tomorrow! https://t.co/mHSI0PbWfe",
+      "at": "2026-10-07T19:19:17.000Z",
+      "url": "https://x.com/thsottiaux/status/2107913674593644711",
+      "is_reply": false,
+      "replying_to": null,
+      "in_reply_to_tweet_id": null,
+      "quote": {
+        "id": "2107575657014468879",
+        "text": "Roundup of Day 2/\n\n2.1/ Approve for me (auto-review) is now included and does not use usage. Can be between 2-10% of plan when used. Also better for you.\n2.2/ Simplified API for builders.\n2.3/ Meeting notes integrated.\n2.4/ Decisions API live for builders. Will use in the app to improve the experience.",
+        "url": "https://x.com/thsottiaux/status/2107575657014468879"
+      }
+    },
+    {
+      "id": "2107913738791596286",
+      "text": "Will be there by EOD PST.",
+      "at": "2026-10-07T19:19:33.000Z",
+      "url": "https://x.com/thsottiaux/status/2107913738791596286",
+      "is_reply": true,
+      "replying_to": "thsottiaux",
+      "in_reply_to_tweet_id": "2107913674593644711"
+    }
+  ],
+  "events": []
+}

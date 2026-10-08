@@ -2020,8 +2020,13 @@ class CodexResetWatcher(MaiBotPlugin):
                     active.append(gid)
             if changed:
                 self._save_state()
-        # Oldest first; baseline/age exclusions never count as delivery evidence.
-        for tweet in sorted(posts, key=lambda t: str(t.get("at") or "")):
+        # Compare actual instants; different UTC offsets need not sort as strings.
+        # Unknown times wait for metadata repair, as before.
+        timed_posts = [(_parse_iso(t.get("at")), t) for t in posts]
+        timed_posts = [(at, t) for at, t in timed_posts if at is not None]
+        for moment, tweet in sorted(
+            timed_posts, key=lambda item: (item[0], str(item[1]["id"]))
+        ):
             tweet_id = str(tweet["id"])
             pending = [
                 gid
@@ -2031,9 +2036,6 @@ class CodexResetWatcher(MaiBotPlugin):
             ]
             if not pending:
                 continue
-            moment = _parse_iso(tweet.get("at"))
-            if moment is None:
-                continue  # Missing timestamp may be repaired next poll.
             if _utcnow() - moment > timedelta(hours=MAX_SIGNAL_AGE_HOURS):
                 async with self._state_lock:
                     for gid in pending:
@@ -2045,18 +2047,76 @@ class CodexResetWatcher(MaiBotPlugin):
                 continue
             key = f"tibo:{tweet_id}"
             if key not in self._inflight:
-                self._inflight[key] = {
-                    "task": asyncio.create_task(
-                        self._tibo_pipeline(tweet, feed, pending), name=key
-                    ),
+                attempt = {
                     "kind": "tibo",
                     "tweet_id": tweet_id,
+                    "at": moment,
                     "groups": list(pending),
+                    "delivery_done": {gid: asyncio.Event() for gid in pending},
                 }
+                self._inflight[key] = attempt
+                task = asyncio.create_task(
+                    self._tibo_pipeline(tweet, feed, pending), name=key
+                )
+                attempt["task"] = task
+                # A task cancelled before its coroutine starts never enters finally.
+                task.add_done_callback(
+                    lambda _task, key=key, attempt=attempt: self._finish_tibo_attempt(
+                        key, attempt
+                    )
+                )
+
+    def _finish_tibo_attempt(self, key: str, attempt: dict) -> None:
+        for done in attempt["delivery_done"].values():
+            done.set()
+        if self._inflight.get(key) is attempt:
+            self._inflight.pop(key)
+
+    async def _deliver_tibo_group(self, gid, tweet_id, attempt, message, card) -> None:
+        """Wait outside the delivery lock; release this group after any attempt."""
+        try:
+            order = (attempt["at"], tweet_id)
+            while True:
+                earlier = [
+                    entry["delivery_done"][gid]
+                    for entry in self._inflight.values()
+                    if entry.get("kind") == "tibo"
+                    and gid in entry["delivery_done"]
+                    and (entry["at"], entry["tweet_id"]) < order
+                    and not entry["delivery_done"][gid].is_set()
+                ]
+                if not earlier:
+                    break
+                for done in earlier:
+                    await done.wait()
+            if not self.config.watcher.tibo_full_push:
+                return
+            await self._deliver_notice(
+                gid,
+                "tibo_delivered_ids",
+                tweet_id,
+                f"tibo:{tweet_id}",
+                message,
+                card=card,
+            )
+            async with self._state_lock:
+                if gid in self._target_groups() and tweet_id in set(
+                    self._group_state(gid).get("tibo_delivered_ids") or []
+                ):
+                    entry = self._group_state(gid)
+                    entry["tibo_seen_ids"] = sorted(
+                        set(entry.get("tibo_seen_ids") or []) | {tweet_id}
+                    )
+                    self._save_state()
+        except Exception:
+            logger.exception("Tibo 动态投递异常：群 %s tweet=%s", gid, tweet_id)
+        finally:
+            attempt["delivery_done"][gid].set()
 
     async def _tibo_pipeline(self, tweet: dict, feed: dict, groups: list[str]) -> None:
         tweet_id = str(tweet["id"])
         key = f"tibo:{tweet_id}"
+        attempt = self._inflight[key]
         try:
             content = await self._enrich_content(tweet_id, feed)
             url = f"https://x.com/thsottiaux/status/{tweet_id}"
@@ -2073,26 +2133,24 @@ class CodexResetWatcher(MaiBotPlugin):
             card = await self._notice_card(
                 "Tibo 动态", url, content, translation, str(tweet.get("at") or ""), True
             )
-            for gid in groups:
-                if not self.config.watcher.tibo_full_push:
-                    break
-                # Separate success-only receipt, under the same per-group gate.
-                await self._deliver_notice(
-                    gid, "tibo_delivered_ids", tweet_id, key, message, card=card
-                )
-                async with self._state_lock:
-                    if gid in self._target_groups() and tweet_id in set(
-                        self._group_state(gid).get("tibo_delivered_ids") or []
-                    ):
-                        entry = self._group_state(gid)
-                        entry["tibo_seen_ids"] = sorted(
-                            set(entry.get("tibo_seen_ids") or []) | {tweet_id}
-                        )
-                        self._save_state()
+            # Render concurrently with other posts, then share the completed cache
+            # across groups. A render failure retains the existing text fallback.
+            if card is not None and self.config.watcher.display_mode == "image":
+                try:
+                    await render_card(self.ctx, card, _utcnow())
+                except Exception:
+                    logger.exception("Tibo 图片准备失败：%s，投递时回退文字", tweet_id)
+            await asyncio.gather(
+                *(
+                    self._deliver_tibo_group(gid, tweet_id, attempt, message, card)
+                    for gid in groups
+                ),
+                return_exceptions=True,
+            )
         except Exception:
             logger.exception("Tibo 动态管线异常：%s", tweet_id)
         finally:
-            self._inflight.pop(key, None)
+            self._finish_tibo_attempt(key, attempt)
 
     async def _fetch_forecast(self) -> dict[str, Any] | None:
         """L4 mirror 源（/api/forecast 的 official_signal）。
