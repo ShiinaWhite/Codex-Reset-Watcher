@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import math
 import re
 import unicodedata
@@ -46,6 +47,45 @@ def _body(text: str, translation: str) -> str:
 def _avatar() -> str:
     data = base64.b64encode((TEMPLATES / "assets/tibo.jpg").read_bytes()).decode()
     return f"data:image/jpeg;base64,{data}"
+
+
+def _card_font_css(card: NoticeCard) -> str:
+    """Embed deterministic core and only the supplemental glyphs this card uses.
+
+    Coverage is partitioned at build time, never generated from notification
+    fixtures. The union retains the original font; no runtime font tooling or
+    filesystem URLs are needed in the Host process.
+    """
+    text = [card.title, card.text, card.translation, card.quote_translation]
+    quote = card.quote if card.tweet and isinstance(card.quote, dict) else {}
+    text.append(str(quote.get("text") or ""))
+    author = quote.get("author") or {}
+    if isinstance(author, dict):
+        text.extend(str(author.get(k) or "") for k in ("name", "screen_name", "handle"))
+    poll = quote.get("poll") or {}
+    if isinstance(poll, dict):
+        for option in poll.get("options") or []:
+            text.extend(str(option.get(k) or "") for k in ("label", "translation"))
+    needed = set("".join(text))
+    assets = TEMPLATES / "assets"
+    index = json.loads((assets / "font-index.json").read_text(encoding="utf-8"))
+    faces = []
+    for i, entry in enumerate(index):
+        if i and not needed.intersection(entry["codepoints"]):
+            continue
+        data = base64.b64encode((assets / entry["file"]).read_bytes()).decode()
+        # Supplemental blocks contain only non-core Han. Restrict selection to
+        # their block, retaining the original core and Latin face precedence.
+        points = [ord(c) for c in entry["codepoints"]]
+        coverage = f"unicode-range: U+{min(points):X}-{max(points):X};" if i else ""
+        faces.append(
+            '@font-face { font-family: "Watcher Sans SC"; '
+            f'src: url("data:font/woff2;base64,{data}") format("woff2"); '
+            "font-style: normal; font-weight: 400 600; font-display: block; "
+            + coverage
+            + " }"
+        )
+    return "\n".join(faces)
 
 
 def _poll_option_label(label: str, translation: str) -> str:
@@ -219,11 +259,8 @@ def build_card_html(card: NoticeCard, now: datetime) -> str:
         css=(TEMPLATES / "card.css")
         .read_text(encoding="utf-8")
         .replace(
-            "__CARD_FONT__",
-            "data:font/woff2;base64,"
-            + base64.b64encode(
-                (TEMPLATES / "assets/watcher-sans-sc.woff2").read_bytes()
-            ).decode(),
+            "__SC_FONTS__",
+            _card_font_css(card),
         )
         .replace(
             "__LATIN_FONT__",

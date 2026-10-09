@@ -2,8 +2,8 @@
 
 一个给 MaiBot 用的 Codex 重置提醒插件：自动关注 Codex 全局额度重置、Banked Reset 和上游重置告警，并把重要消息翻译成中文后发送到指定 QQ 群。
 
-- 当前版本：**0.1.13**
-- 运行环境：MaiBot Host `1.0.0 – 1.2.99`、SDK `2.8.0 – 2.99.99`（以插件清单声明为准）
+- 当前版本：**0.2.0**
+- 运行环境：MaiBot Host `1.2.4 – 1.3.5`、SDK `2.8.0 – 2.10.0`（以插件清单声明为准）
 - 许可证：MIT
 
 ## 你会得到什么
@@ -30,17 +30,14 @@
 
 以下截图来自真实 QQ 群里的插件通知：
 
-**长公告会自动附上完整、忠实的中文翻译：**
-
 <p align="center">
-  <img src="docs/images/qq-notification-full-translation.png" width="560" alt="长公告通知示例：中文翻译、Tibo 原文与原帖链接">
+  <img src="docs/images/qq-notification-reset-confirmed.png" width="430" alt="文字通知示例：中文、原文与来源链接">
 </p>
 
-**短确认也会直接发送到群里：**
-
-<p align="center">
-  <img src="docs/images/qq-notification-reset-confirmed.png" width="430" alt="重置确认通知示例：中文翻译、原文与原帖链接">
-</p>
+图片模式的本地效果预览：[普通 Tweet](docs/preview/tweet.png)、
+[引用帖](docs/preview/tweet-quote.png)、[引用投票](docs/preview/tweet-quote-poll.png)、
+[系统通知](docs/preview/system.png)。预览使用演示正文或明确标注的真实投票快照，
+不冒充新的真实 QQ 投递。
 
 ## 快速开始
 
@@ -83,7 +80,7 @@ model_task = "replyer"    # WebUI 推荐选择：replyer / planner / utils
 
 完整默认配置示例见 [config.example.toml](config.example.toml)。实际 `config.toml` 由 MaiBot 在运行时根据插件配置模型生成和维护，无需手动放置。
 
-## dev 新功能：Tibo 动态与图片通知
+## Tibo 动态与图片通知
 
 `tibo_full_push = true` 新增独立动态车道，从公开 feed 的 Tibo timeline 中推送普通发帖、长帖和有自己评论的引用帖，排除回复他人，保留明确回复自己的续帖；回复对象不明确、纯转发和只有链接的分享不推送。回复对象的大小写和可选前导 `@` 会规范化。首次开启或新加群时静默建立本群历史基线，之后按群推送新发现的动态；缺失必要回复元数据或时间的数据等待后续补齐。超过现有 48 小时年龄护栏的历史动态不补发。
 
@@ -99,10 +96,13 @@ model_task = "replyer"    # WebUI 推荐选择：replyer / planner / utils
 - 图片中英文字体使用本地打包的 Noto Sans SC / Noto Sans WOFF2 子集，统一 CSS 字族，覆盖全部 GB2312 常用汉字及更广的基本汉字区；标题和姓名为 600，正文、账号与时间为 400。无需 CDN，字体许可、体积及构建方法见 [字体归属说明](templates/assets/ATTRIBUTION.md)。
 - 翻译失败或禁用时保留原文，告警本身继续投递。浏览器、字体或 Host 渲染能力缺失时回退文字。
 
-这是 dev 待 review 的功能，插件 Release 版本仍保持 0.1.13；配置结构版本为 1.3.0，使 Host 重建配置时补充新项并保留原值。没有修改生产配置或生产状态。
-
-本地 HTML 截图预览（演示文案，未向 QQ 发送）：[带引用的 Tweet](docs/preview/tweet-quote.png)、[普通 Tweet](docs/preview/tweet.png)、[系统通知](docs/preview/system.png)、[真实引用投票快照](docs/preview/tweet-quote-poll.png)。实现、验证方式及边界见 [开发验证说明](docs/dev-tibo-image.md)。
-本轮字体调整的同环境 before / after 对比见 [Typography 预览](docs/preview/typography.md)。
+配置结构版本为 **1.3.0**，与插件版本分开管理。0.2.0 没有改变配置 schema，
+升级仍由 Host 保留用户已有值，不重建 receipt/state。
+Host 管理 Playwright、Chromium 与系统库；插件不新增浏览器/Python runtime dependency。
+首次 browser 下载可能较慢，建议先准备 Host 渲染环境。渲染关闭、缺包、缺浏览器、
+下载/RPC/截图或发图失败时按群回退文字。manifest/版本拒绝加载发生在插件运行前，
+此时无法执行 fallback。SDK 2.8.1 有已知模型任务解析回归，建议使用 2.8.2 及以上。
+完整准备方法与降级合同见 [图片通知说明](docs/image-notifications.md)。
 
 ## 多群支持
 
@@ -138,7 +138,7 @@ Banked Reset 不是“当前额度立刻刷新”。
 
 但需要诚实说明一个上游限制：部分 Banked 推送接口只提供“当前最新一条”，没有完整历史记录或游标。
 
-因此，如果插件停机，或者两次检查之间某条 Banked 推送很快又被下一条推送覆盖，那么已经消失的那条消息可能无法找回。0.1.12 覆盖的是检查时仍然可见的上游 Banked 推送，不承诺离线恢复或被覆盖后的补偿。
+因此，如果插件停机，或者两次检查之间某条 Banked 推送很快又被下一条推送覆盖，那么已经消失的那条消息可能无法找回。插件覆盖的是检查时仍然可见的上游 Banked 推送，不承诺离线恢复或被覆盖后的补偿。
 
 这不是通过增加本地关键词判断就能可靠解决的问题；完整离线恢复需要上游提供带历史记录或游标的告警接口。
 
@@ -165,31 +165,23 @@ Banked Reset 不是“当前额度立刻刷新”。
 **从旧版本升级会丢群配置吗？**
 不会。旧的单群配置 `group_id` 会自动迁移到多群列表 `group_ids`。
 
-## v0.1.13 更新说明
+## 0.2.0 更新
 
-修复三组生产重复通知：同一完整通知在 feed 与告警镜像路径间使用成功投递证据协调，发送前按群串行重查；原有 baseline 与过期记录不会被误当作成功投递。上游后续告警升级和不同 Banked 生命周期阶段继续独立通知，缺少可靠关联时保守发送。
+Tibo 全推送、图片通知、引用与投票正式纳入功能文档。Tibo 动态并发准备，逐群按真实
+时间投递；跨轮在途帖也约束较新帖。失败/异常/取消释放该群屏障，该群尝试完成后
+不会因其它群仍在发送而阻塞旧告警车道。
 
-没有 X 推文的观测事件展示、翻译明确标注的上游正文；文字模式及文字回退保留来源页面链接，图片不独立显示来源链接，正文中的网址正常保留。来源和阶段的关联不依赖正文关键词或 LLM 分类。
-
-根因证据、关联规则、迁移边界和回归测试说明见 [2026-09-30 调查报告](docs/forensics/2026-09-30/REPORT.md)。
-
-## v0.1.12 更新说明
-
-v0.1.12 主要修复了一类真实发生过的 Banked 漏报。
-
-此前有一条 Banked 消息已经被上游作为用户告警推送，Telegram 也已经发送，但结构化生命周期状态当时是 `unknown`，旧版插件因此把它静默了。
-
-0.1.12 新增了“上游推送镜像”路径：当插件在检查时观察到上游已经决定向用户推送 Banked 告警，就直接镜像到 QQ，不再因为生命周期状态暂时是 `unknown` 而自行否决。
-
-完整事故取证与回归材料见 [evidence/v0.1.12/](evidence/v0.1.12/)。
+发布工程清理安装树、减少常见图片的字体传输，保留所有原有基本汉字及完整回归测试。
+详细更新见 [CHANGELOG.md](CHANGELOG.md)，工程证据与已知边界见
+[PRE_MAIN_AUDIT.md](PRE_MAIN_AUDIT.md)。
 
 ## 版本与兼容性
 
-- 当前版本：0.1.13
-- MaiBot Host：`1.0.0 – 1.2.99`
-- MaiBot SDK：`2.8.0 – 2.99.99`
+- 当前版本：0.2.0
+- MaiBot Host：`1.2.4 – 1.3.5`
+- MaiBot SDK：`2.8.0 – 2.10.0`
 
-以上是插件清单声明的兼容范围，不代表所有中间版本都经过逐一实测。
+以上范围基于正式 tag、所需 API 与独立 loader/render 验证；不代表所有中间组合都经过逐一实测。默认仍为文字，图片为可选模式。config_version 保持 1.3.0。
 
 ## 问题反馈与许可
 

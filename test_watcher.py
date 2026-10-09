@@ -52,7 +52,7 @@ from plugin import (  # noqa: E402
     upstream_alert_event_id,
 )
 
-PROBE_DIR = Path(__file__).resolve().parent
+PROBE_DIR = Path(__file__).resolve().parent / "tests/fixtures/historical"
 
 BEIJING = ZoneInfo("Asia/Shanghai")
 
@@ -3837,7 +3837,7 @@ def _confirmation_feed() -> dict:
     data = json.loads(
         (
             Path(__file__).resolve().parent
-            / "live/forensic_0908/replay/corpus/confirmation_cycle_landed.json"
+            / "tests/fixtures/historical/live/forensic_0908/replay/corpus/confirmation_cycle_landed.json"
         ).read_text(encoding="utf-8")
     )
     events = [v["event"] for v in data.values()]

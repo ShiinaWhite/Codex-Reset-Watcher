@@ -1,5 +1,5 @@
 * { box-sizing: border-box; }
-@font-face { font-family: "Watcher Sans SC"; src: url("__CARD_FONT__") format("woff2"); font-style: normal; font-weight: 400 600; font-display: block; }
+__SC_FONTS__
 @font-face { font-family: "Watcher Sans SC"; src: url("__LATIN_FONT__") format("woff2"); font-style: normal; font-weight: 400 600; font-display: block; unicode-range: U+0020-024F, U+0370-052F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF; }
 html, body { margin: 0; color: #24272c; font-family: "Watcher Sans SC", "Noto Sans CJK SC", "Microsoft YaHei", "PingFang SC", Arial, sans-serif; font-weight: 400; }
 #capture { width: 1240px; padding: 24px; background: #edf0f3; }

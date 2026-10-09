@@ -1,0 +1,81 @@
+{
+  "git_commit": "fa09454985ee4dde04e01f2acc7b6340166c2abf",
+  "notes": "Byte-identical referenced public API snapshots only. Historical forensic scripts/logs/UI dumps are archived outside the installation tree. See PRE_MAIN_AUDIT.md.",
+  "fixtures": [
+    {
+      "path": "tests/fixtures/historical/docs/forensics/2026-09-30/events.json",
+      "original_git_path": "docs/forensics/2026-09-30/events.json",
+      "sha256": "a16d4a7198950979fc083bbd40b5e30116e26cee6fac04feef32f2b3d79e6d40"
+    },
+    {
+      "path": "tests/fixtures/historical/docs/forensics/2026-09-30/push_notification.json",
+      "original_git_path": "docs/forensics/2026-09-30/push_notification.json",
+      "sha256": "53a997375e87a488505fb05c3ec33cf2584624be218689937dcc25387368e1c6"
+    },
+    {
+      "path": "tests/fixtures/historical/evidence/v0.1.12/golden_2097752790177370535.json",
+      "original_git_path": "evidence/v0.1.12/golden_2097752790177370535.json",
+      "sha256": "613e8be87ce6a80be48df52f87292277cdec6c5220aba2cc0da52700be158bf7"
+    },
+    {
+      "path": "tests/fixtures/historical/evidence/v0.1.12/push_notification.json",
+      "original_git_path": "evidence/v0.1.12/push_notification.json",
+      "sha256": "7049bbd5b3b46815e4b2dfa917d061f6283509f72ef9f30a86853d59875cb420"
+    },
+    {
+      "path": "tests/fixtures/historical/live/feed_0905.json",
+      "original_git_path": "live/feed_0905.json",
+      "sha256": "655b109bbca3d3e4333ca9ab24fd52f2e3efdb45457ce00689fe3ab7de33c90c"
+    },
+    {
+      "path": "tests/fixtures/historical/live/forecast_0905.json",
+      "original_git_path": "live/forecast_0905.json",
+      "sha256": "755a91ccf41e47e6dbf77342022820e5d0b78ddb1f1b94326374180ddb74905a"
+    },
+    {
+      "path": "tests/fixtures/historical/live/forensic_0908/forecast_0908.json",
+      "original_git_path": "live/forensic_0908/forecast_0908.json",
+      "sha256": "2b07d9d8690a2f311c7efc8c519239018418de1a1654dcb656449b504af633dc"
+    },
+    {
+      "path": "tests/fixtures/historical/live/forensic_0908/providers/fxtwitter_banked_nonnote.json",
+      "original_git_path": "live/forensic_0908/providers/fxtwitter_banked_nonnote.json",
+      "sha256": "25c4cbbc6a2af0ebf0c80f4aa71ebfde01b71f0c4b2b19bc35685dcbbc55039b"
+    },
+    {
+      "path": "tests/fixtures/historical/live/forensic_0908/providers/fxtwitter_status.json",
+      "original_git_path": "live/forensic_0908/providers/fxtwitter_status.json",
+      "sha256": "6280cfc4290ee9a2924ba05420b94a677d7adc312a70ab75c9d93d705a0b2b11"
+    },
+    {
+      "path": "tests/fixtures/historical/live/forensic_0908/providers/vxtwitter_status.json",
+      "original_git_path": "live/forensic_0908/providers/vxtwitter_status.json",
+      "sha256": "03992c03843f3575d3796713cf07997be138a651a7139f078acb69c4b73dad40"
+    },
+    {
+      "path": "tests/fixtures/historical/live/forensic_0908/replay/corpus/confirmation_cycle_landed.json",
+      "original_git_path": "live/forensic_0908/replay/corpus/confirmation_cycle_landed.json",
+      "sha256": "80ca15d488849c0ed4cef6aeb0a34a7f716002bfe066426ec5d34acaa63683ef"
+    },
+    {
+      "path": "tests/fixtures/historical/live/forensic_0908/replay/corpus/feed_landed.json",
+      "original_git_path": "live/forensic_0908/replay/corpus/feed_landed.json",
+      "sha256": "e8e73e1641582ec2619c91043c7a6c852132220e86d7876e42290c937d54efce"
+    },
+    {
+      "path": "tests/fixtures/historical/probe2_tibo_current.json",
+      "original_git_path": "probe2_tibo_current.json",
+      "sha256": "321045ffb2b31a8e0b6006073261492bb1772c98d55476e796bd87fa73d395c0"
+    },
+    {
+      "path": "tests/fixtures/historical/probe_cr_feed.json",
+      "original_git_path": "probe_cr_feed.json",
+      "sha256": "4eba3e63744eba6c9d7d543eceea37f2f42c14a4808acbc586f75c7ab1e6539a"
+    },
+    {
+      "path": "tests/fixtures/historical/probe_tibo_ev1.json",
+      "original_git_path": "probe_tibo_ev1.json",
+      "sha256": "39734b5c62cd0d133cde00c474933b3123efb8872c877f1050861659adeb1892"
+    }
+  ]
+}

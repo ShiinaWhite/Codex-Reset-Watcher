@@ -1,6 +1,6 @@
 """Historical Replay pytest 门禁：真实 corpus fixture → 生产规则判定。
 
-数据：live/forensic_0908/replay/corpus/ 里的真实公开 API fixture
+数据：tests/fixtures/historical/live/forensic_0908/replay/corpus/ 里的真实公开 API fixture
 （2026-09-08 落地后归档 + 历史快照序列）。完全离线，无网络请求。
 """
 
@@ -18,7 +18,10 @@ from plugin import (
     signals_from_feed,
 )
 
-CORPUS = Path(__file__).resolve().parent / "live/forensic_0908/replay/corpus"
+CORPUS = (
+    Path(__file__).resolve().parent
+    / "tests/fixtures/historical/live/forensic_0908/replay/corpus"
+)
 
 
 def _landed() -> dict:
@@ -149,9 +152,10 @@ def test_lc2_event_rolled_out_archive_reply_fail_closed():
 def test_sep5_false_positive_produces_no_declared_signal():
     """Sep-5 内部误报：reply 推文不产生 declared 信号（生产规则静默）。"""
     feed = json.loads(
-        (Path(__file__).resolve().parent / "live/feed_0905.json").read_text(
-            encoding="utf-8"
-        )
+        (
+            Path(__file__).resolve().parent
+            / "tests/fixtures/historical/live/feed_0905.json"
+        ).read_text(encoding="utf-8")
     )
     signals = signals_from_feed(feed)
     declared_ids = {s.event_id for s in signals if s.lane == "global_declared"}

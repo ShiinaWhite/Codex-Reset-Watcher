@@ -57,15 +57,5 @@ feed fallback、失败、跨 Provider 补全等变体。覆盖两项百分比、
 [本地成果图](preview/tweet-quote-poll.png)。Host 验收应只在独立 helper 中使用同一 presentation
 fixture，硬限制测试群 `611817038`；正式 Watcher 与其两群不参与测试。
 
-本轮本地验证：完整 pytest **359 passed**；投票 / Tibo / delivery identity targeted
-**131 passed**；真实 Chromium **6 passed**；Ruff、format、diff 检查通过。
-在用户目录补齐 Chromium 所需 NSS/NSPR/ALSA 运行库和与 Host 一致的 Noto Color Emoji
-fallback，未更换插件字体资产或改动生产环境。
-
-选项合行展示的后续验证：完整 pytest **369 passed**；投票 targeted **32 passed**；
-真实 Chromium **6 passed**，并校验中英标签同一行、比例条及百分比在下一行、emoji 不重复。
-Ruff、format、diff 检查通过；本地重新生成投票预览，未操作生产或发送 QQ 消息。
-
-外层括号与短标题合行后续验证：完整 pytest **382 passed**；投票 targeted **45 passed**；
-真实 Chromium **6 passed**，包括 `Vote（投票）` 同行、英文选项外层括号去除与普通引用不变。
-Ruff、format、diff 检查通过；仅更新本地投票预览，未部署或发送 QQ 消息。
+完整候选测试结果见 [PRE_MAIN_AUDIT.md](../PRE_MAIN_AUDIT.md)。
+fixture 的中文是手工演示译文；不把它称为历史生产 LLM 输出。

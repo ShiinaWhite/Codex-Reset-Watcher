@@ -10,18 +10,20 @@ reference. Profile metadata was checked through FxTwitter's public status API.
 
 ## Offline card typography
 
-The CSS family `Watcher Sans SC` combines two local variable WOFF2 subsets:
+The CSS family `Watcher Sans SC` combines locally bundled variable WOFF2 assets:
 
 | Asset | Upstream | Bytes | Weights |
 | --- | --- | ---: | --- |
-| `watcher-sans-sc.woff2` | Noto Sans SC 2.004 | 5,404,840 | 400–600 |
+| `watcher-sans-sc.woff2` (GB2312 core) | Noto Sans SC 2.004 | 1,793,360 | 400–600 |
+| 21 `watcher-sans-sc-*.woff2` supplemental blocks | Same pinned SC font | 4,279,124 total | 400–600 |
 | `watcher-sans-latin.woff2` | Noto Sans 2.015 | 95,056 | 400–600 |
 
-Total: **5,499,896 bytes (5.245 MiB)**. The previous Latin-only TTF was 556,328
-bytes; the net font asset increase is 4,943,568 bytes. Full upstream TTFs are
-17,772,300 + 2,049,096 bytes and are not distributed with the plugin. For the same
-Chinese subset, separate static 400/600 WOFF2 files measured 3,080,620 + 3,142,884
-bytes, larger than the selected variable file.
+Bundled fonts total **6,167,540 bytes**. This is 667,644 bytes larger than the
+old monolithic 5,499,896-byte bundle because separate subsets retain shared
+components. Each typical render embeds only the 1,793,360-byte core and the
+95,056-byte Latin font, plus any supplemental blocks required by displayed text.
+The tradeoff preserves deterministic glyphs while reducing typical RPC payload.
+Full upstream TTFs (17,772,300 + 2,049,096 bytes) are not shipped.
 
 Both fonts use **SIL Open Font License 1.1**. The original copyright and license
 are bundled as `OFL.txt` (SC, Adobe) and `OFL-Latin.txt` (Latin, Noto Project
@@ -39,7 +41,7 @@ Pinned Latin source:
 [license](https://github.com/google/fonts/blob/8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5/ofl/notosans/OFL.txt).
 Source SHA256: `bfb7bb691513f12e734dc346c03a03f784912432d7e3fa8e56efcf906fe86b3d`.
 
-SC coverage uses general Unicode ranges: U+0020–024F, U+0370–052F,
+The union of SC partitions preserves the baseline general Unicode ranges: U+0020–024F, U+0370–052F,
 U+2000–206F, U+20A0–20CF, U+2100–27BF, U+3000–303F, U+4E00–9FFF,
 U+FE10–FE6F and U+FF00–FFEF. It preserves every upstream-supported character
 in those ranges: 22,342 codepoints, including **20,976 basic Han characters and
@@ -52,15 +54,19 @@ U+0370–052F, U+1E00–1EFF, U+2000–206F and U+20A0–20CF, with width fixed 
 100. A second `@font-face` with these `unicode-range` values selects the Latin
 font within the same CSS family. This avoids SC's wide English curly quotes
 while keeping Chinese, English, numerals and footer typography consistent.
-Both files are embedded as data URLs; rendering needs no CDN or network.
+Selected fonts are embedded as data URLs; rendering needs no CDN or network. The core contains every GB2312 Han character and the non-Han baseline repertoire; remaining Han are partitioned by generic 1,024-codepoint Unicode blocks. `font-index.json` records the exact disjoint coverage. No characters are chosen from a notification fixture. The union is unchanged, including traditional/rare basic Han. File URIs are intentionally not used.
 
 Rebuild with development-only FontTools 4.66.1 / Brotli 1.2.0:
 
 ```bash
 python -m pip install 'fonttools[woff]==4.66.1' 'brotli==1.2.0'
-python tools/build_card_font.py '/path/to/NotoSansSC[wght].ttf'
+# Rebuild the pinned full baseline into a temporary file, then partition it.
+python tools/build_card_font.py '/path/to/NotoSansSC[wght].ttf' --output /tmp/watcher-baseline.woff2
+python tools/build_card_font.py /tmp/watcher-baseline.woff2 --partition
 python tools/build_card_font.py '/path/to/NotoSans[wdth,wght].ttf' --latin
 ```
 
 The build tool verifies the pinned input SHA256 and preserves the source font
 timestamp. FontTools/Brotli are not plugin runtime dependencies.
+
+The full baseline SHA256 is `598f5ad49eb1b5246840df70a46c6a1c83346b2b8fdd9ef797785e3130cbe471`; the partitioner checks it before generating any assets.

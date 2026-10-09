@@ -12,7 +12,7 @@ import plugin as module
 from test_watcher import _make_plugin, _gstate, _drain_inflight, BEIJING
 
 
-FIXTURES = Path(__file__).parent / "docs/forensics/2026-09-30"
+FIXTURES = Path(__file__).parent / "tests/fixtures/historical/docs/forensics/2026-09-30"
 GID = "100000001"
 GLOBAL_IDS = ["2103637477760311522", "2103911959544610829"]
 BANKED_ID = "2105008012525769969"

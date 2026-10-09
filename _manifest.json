@@ -19,8 +19,8 @@
     }
   },
   "host_application": {
-    "max_version": "1.2.99",
-    "min_version": "1.0.0"
+    "max_version": "1.3.5",
+    "min_version": "1.2.4"
   },
   "i18n": {
     "default_locale": "zh-CN",
@@ -33,7 +33,7 @@
   "manifest_version": 2,
   "name": "Codex 额度重置提醒",
   "sdk": {
-    "max_version": "2.99.99",
+    "max_version": "2.10.0",
     "min_version": "2.8.0"
   },
   "urls": {
@@ -42,5 +42,5 @@
     "issues": "https://github.com/ShiinaWhite/Codex-Reset-Watcher/issues",
     "repository": "https://github.com/ShiinaWhite/Codex-Reset-Watcher"
   },
-  "version": "0.1.13"
+  "version": "0.2.0"
 }

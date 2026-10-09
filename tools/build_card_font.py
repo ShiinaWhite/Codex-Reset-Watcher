@@ -6,6 +6,7 @@ Coverage uses general Unicode ranges, never notification fixtures.
 
 import argparse
 import hashlib
+import json
 from pathlib import Path
 
 from fontTools import subset
@@ -15,6 +16,7 @@ from fontTools.varLib.instancer import instantiateVariableFont
 
 SOURCE_SHA256 = "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da"
 LATIN_SHA256 = "bfb7bb691513f12e734dc346c03a03f784912432d7e3fa8e56efcf906fe86b3d"
+BASELINE_SHA256 = "598f5ad49eb1b5246840df70a46c6a1c83346b2b8fdd9ef797785e3130cbe471"
 LATIN_RANGES = (
     (0x0020, 0x024F),
     (0x0370, 0x052F),
@@ -76,10 +78,59 @@ def build(source, output, *, latin=False):
     )
 
 
+def partition(source, directory):
+    """Partition the pinned 400–600 baseline without reducing its coverage."""
+    if hashlib.sha256(source.read_bytes()).hexdigest() != BASELINE_SHA256:
+        raise ValueError("Expected the pinned basic-Han baseline WOFF2")
+    common = set()
+    for row in range(0xB0, 0xF8):
+        for column in range(0xA1, 0xFF):
+            try:
+                common.add(ord(bytes([row, column]).decode("gb2312")))
+            except UnicodeDecodeError:
+                pass
+    assert len(common) == 6763
+    with TTFont(source) as baseline:
+        points = set(baseline.getBestCmap())
+    han = points & set(range(0x4E00, 0xA000))
+    parts = [("watcher-sans-sc.woff2", (points - han) | common)]
+    for start in range(0x4E00, 0xA000, 1024):
+        selected = (han - common) & set(range(start, min(0xA000, start + 1024)))
+        if selected:
+            parts.append((f"watcher-sans-sc-{start:04x}.woff2", selected))
+    directory.mkdir(parents=True, exist_ok=True)
+    index = []
+    for name, selected in parts:
+        font = TTFont(source, recalcTimestamp=False)
+        options = subset.Options()
+        options.name_IDs = ["*"]
+        options.name_languages = ["*"]
+        options.name_legacy = True
+        selected_font = subset.Subsetter(options=options)
+        selected_font.populate(unicodes=selected)
+        selected_font.subset(font)
+        font.flavor = "woff2"
+        font.save(directory / name)
+        index.append(
+            {
+                "file": name,
+                "codepoints": "".join(chr(cp) for cp in sorted(font.getBestCmap())),
+                "bytes": (directory / name).stat().st_size,
+            }
+        )
+        print(f"{name}: {index[-1]['bytes']} bytes")
+    (directory / "font-index.json").write_text(
+        json.dumps(index, ensure_ascii=False, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path)
     parser.add_argument("--latin", action="store_true")
+    parser.add_argument("--partition", action="store_true")
+    parser.add_argument("--output-dir", type=Path, default=Path("templates/assets"))
     parser.add_argument(
         "--output",
         type=Path,
@@ -90,4 +141,7 @@ if __name__ == "__main__":
         if args.latin
         else "templates/assets/watcher-sans-sc.woff2"
     )
-    build(args.source, output, latin=args.latin)
+    if args.partition:
+        partition(args.source, args.output_dir)
+    else:
+        build(args.source, output, latin=args.latin)
