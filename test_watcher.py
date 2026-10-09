@@ -492,6 +492,13 @@ class _FakeCtx:
         self.llm = _FakeLLM()
         self.paths = SimpleNamespace(data_dir=tmp_path)
 
+    async def call_capability(self, capability, timeout_ms=None, **kwargs):
+        # Keep existing local prompt/response fakes at the capability boundary.
+        # Real SDK/Host transport and routing are covered by test_llm_contract.
+        assert capability == "llm.generate"
+        assert set(kwargs) == {"prompt", "model", "temperature", "max_tokens"}
+        return await self.llm.generate(rpc_timeout_ms=timeout_ms, **kwargs)
+
 
 def _make_plugin(tmp_path: Path, **watcher: object) -> CodexResetWatcher:
     plugin = CodexResetWatcher()

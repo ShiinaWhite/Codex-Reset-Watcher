@@ -16,8 +16,11 @@ package 属于 MaiBot Host 的运行依赖；插件不安装 Python 包、浏览
 这些下限不能仅用“渲染 API 已存在”替代。具体正式 tag/commit 证据见
 [PRE_MAIN_AUDIT.md](../PRE_MAIN_AUDIT.md)。
 
-SDK **2.8.1** 存在已知的默认模型任务解析回归，可能让翻译失败；应使用
-2.8.0 或 **2.8.2 及以上**，推荐后者。manifest 的闭区间无法表达这个版本空洞。
+翻译使用 `ctx.call_capability("llm.generate", model=llm.model_task, ...)`，不发送
+`task_name`，由 Host 兼容路由识别模型任务，避开 convenience wrapper 的默认注入。
+Host 1.2.4 + SDK 2.8.0、Host 1.2.5 + SDK 2.8.1/2.8.2、Host 1.3.5 + SDK 2.10.0
+已通过真实 SDK 包和正式 Host 路由源码矩阵回归；SDK 2.8.1 无需排除。
+RPC 超时通过 `call_capability(timeout_ms=...)` 使用剩余总预算，不发送到 LLM 参数中。
 不宣称范围内每一种 Host/SDK 组合都经过完整运行测试，也不预先承诺未来版本。
 
 官方 1.2.5–1.3.5 Docker 使用 `uv sync --locked --no-dev --no-install-project`

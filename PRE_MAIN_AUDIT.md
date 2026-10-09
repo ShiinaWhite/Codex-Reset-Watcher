@@ -8,7 +8,9 @@
 ## 结论与范围
 
 候选完成 Host contract 收口、保留全字形的字体按需传输、安装树清理及 0.2.0 文档。
-`plugin.py` 除版本 docstring 外 AST 与 fa0945 相同；不改变 Watcher 判定、Tibo ordering、
+工程快照 `ece7ef3` 的 `plugin.py` 除版本 docstring 外 AST 与 fa0945 相同。
+后续兼容修复仅将 LLM wrapper 改为直接 capability 调用，保留共用总预算；
+不改变 Watcher 判定、Tibo ordering、
 quote/poll enrichment、delivery identity、receipt、retry、state 或配置 schema。
 `config_version=1.3.0`；默认 text、image 可选；全推送默认关闭。
 
@@ -43,10 +45,39 @@ Host 1.0.0–1.2.99 与没有验证依据的 SDK 2.99.99 上限。
 manifest validator 虽有显示/验证增强，版本范围的比较合同继续保留。
 validator 对同 minor 的未来 patch 可能仅警告；这不等于我们承诺未来版本已验证。
 
-**版本空洞：** SDK 2.8.1 的 LLM 代理默认发送 `task_name="utils"`，影响传
-`model="replyer"` 的旧用法；2.8.2 修复。manifest 闭区间无法表达排除单个版本。
-README 明确建议 2.8.0 或 2.8.2+，避免 2.8.1；不声称所有中间组合全部实测。
-官方 Host 1.2.5 lockfile 恰含 2.8.1，须注意这个组合的翻译限制，通知仍保留原文。
+**LLM 兼容修复：** Watcher 直接调用 `ctx.call_capability("llm.generate", ...)`，
+仅发送 `prompt`、`model=cfg.model_task`、`temperature`、`max_tokens`，不发送
+`task_name`。RPC 使用 `timeout_ms`，与首次翻译、可选一次修复共用原有 monotonic
+deadline；并发等待也消耗该预算。无需排除 SDK 2.8.1。
+
+实际 SDK wheel 与正式 Host Git blob 的矩阵回归结果：
+
+| Host | SDK | 原生 Host 请求 `task_name` | 原生 Host 请求 `model_name` |
+| --- | --- | --- | --- |
+| 1.2.4 | 2.8.0 | `replyer` | `None` |
+| 1.2.5 | 2.8.1 | `replyer` | `None` |
+| 1.2.5 | 2.8.2 | `replyer` | `None` |
+| 1.3.5 | 2.10.0 | `replyer` | `None` |
+
+测试执行实际 SDK 的 `PluginContext.call_capability`、正式 Host 的
+`RuntimeCoreCapabilityMixin._cap_llm_generate`、任务 resolver 和 `LLMServiceRequest`，
+仅隔离配置/日志与最终外部模型调用，不启动 Bot 或访问模型服务。具体模型名设为
+`actual-reply-model`，与任务名 `replyer` 区分，禁止按具体模型 `replyer` 假通过。
+SDK 2.8.1 的旧 wrapper 反向对照也复现了 `task_name="utils"`、
+`model_name="replyer"` 的错误路由。此矩阵证明 SDK/Host 参数合同，不等同于外部模型实发。
+
+可重复运行的入口为 `test_llm_contract.py`。真实 SDK wire/预算回归默认执行；
+正式 Host 矩阵需要单独的官方 MaiBot clone，未设置环境时明确 skip，不把 skip 当通过：
+
+```bash
+CRW_HOST_GIT_ROOT=/path/to/official-MaiBot-clone \
+CRW_EXPECT_SDK=2.8.1 \
+python -m pytest -v test_llm_contract.py
+```
+
+该 clone 需包含 1.2.4、1.2.5、1.3.5 的正式提交，Python 环境安装对应实际 SDK。
+来源及 SHA256 记录于 `tests/fixtures/llm-host-origins.json`，测试读取并校验 Git blobs；
+上游 Core 源码、SDK wheels 和原始日志仅保存在仓库外的验收目录，未混入发布树。
 
 可抽查的主来源：
 
@@ -383,6 +414,17 @@ manifest 和 README 当前版本为 **0.2.0**；Tibo、image、quote、poll、or
 README 仍链接精简效果图、许可和普通用户配置方法。
 
 ## Verification 与复现
+
+LLM 兼容修复后的验证：SDK 2.8.0 全量 **432 passed / 1 skipped**（11.85s），
+SDK 2.8.1 全量 **433 passed**（11.88s），SDK 2.10.0 全量 **432 passed / 1 skipped**
+（12.08s）。skip 仅为要求实际 SDK 2.8.1 的旧 wrapper 反向对照；正式 Host 矩阵
+均设置外部源码路径执行，没有跳过。四组独立矩阵分别为 **4 / 5 / 4 / 4 passed**。
+Ordering/LLM/预算 targeted 为 **56 passed / 1 skipped**，真实 Chromium 六种卡片
+为 **6 passed**；Ruff、format、diff check 均通过。AST 归一化核对确认：除 docstring
+外，`plugin.py` 相对 `24b9b6c` 仅改变这一处 LLM 入口及 RPC timeout 参数名。
+模拟首次翻译用去 120 秒后，修复 RPC 只使用约 480 秒，而非重新获得 600 秒。
+
+下表为前述 `ece7ef3` 工程快照的历史验证记录：
 
 | 验证 | 结果 |
 | --- | --- |

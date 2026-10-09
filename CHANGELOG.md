@@ -16,6 +16,8 @@
 ### 发布工程
 
 - 收口 Host/SDK 正式版本兼容范围，说明 Host-managed Playwright/Chromium 与降级合同。
+- 翻译直接调用 `llm.generate` capability，仅传模型任务、不传 `task_name`，兼容 SDK
+  2.8.1；首次翻译及可选一次修复仍共享原有总预算，RPC 使用剩余时间。
 - 离线 Noto SC 字体按核心/补充块传输，保留既有全部字形覆盖，显著降低典型 HTML RPC。
 - 将必需历史公开 API 快照保真归入测试 fixtures，删除安装树中的 raw forensic、probe
   与过时开发截图；保留完整回归测试和用户效果图。

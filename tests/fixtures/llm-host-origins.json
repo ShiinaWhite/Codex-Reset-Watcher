@@ -1,0 +1,65 @@
+{
+  "1.2.4": {
+    "commit": "21cd74d81d47b6f77ba5ab7116a88916e957d15b",
+    "sources": {
+      "core-1.2.4.py.source": {
+        "path": "src/plugin_runtime/capabilities/core.py",
+        "sha256": "1de213e7411f209efbf4e29c5ea4a9b8292f005467fa42c1580fe4977a1eb635",
+        "git_blob": "dc4f41685e6de52c8cb5cbe48a4a9475f6acc26b"
+      },
+      "tasks-1.2.4.py.source": {
+        "path": "src/services/service_task_resolver.py",
+        "sha256": "e6a92d1ef479fcbe261a02e1a895ebd5a609f451c87e7daf621c22144d485979",
+        "git_blob": "e01cddc2ea0faabecd7266125482e723b40d6a28"
+      },
+      "request-1.2.4.py.source": {
+        "path": "src/common/data_models/llm_service_data_models.py",
+        "source_sha256": "7b36f0781d54e04145992c3e1eb03d5c697bc302729b89f950b420b82b9946e2",
+        "sha256": "1238ccafaf977e5c488aca3744d433509996bf905d6fbf6f235638f9752da373",
+        "extraction": "LLMServiceRequest class, including dataclass decorator; original lines preserved"
+      }
+    }
+  },
+  "1.2.5": {
+    "commit": "b8c39400dcc9940791346503af24f2060649402d",
+    "sources": {
+      "core-1.2.5.py.source": {
+        "path": "src/plugin_runtime/capabilities/core.py",
+        "sha256": "84132ff9365ca13d66aa47c5eb5a2dead66d862b1d2a1f4d15d188235e27ad84",
+        "git_blob": "51cc511bc87a18b1c6d24707ff777454a7c7f118"
+      },
+      "tasks-1.2.5.py.source": {
+        "path": "src/services/service_task_resolver.py",
+        "sha256": "e6a92d1ef479fcbe261a02e1a895ebd5a609f451c87e7daf621c22144d485979",
+        "git_blob": "e01cddc2ea0faabecd7266125482e723b40d6a28"
+      },
+      "request-1.2.5.py.source": {
+        "path": "src/common/data_models/llm_service_data_models.py",
+        "source_sha256": "7b36f0781d54e04145992c3e1eb03d5c697bc302729b89f950b420b82b9946e2",
+        "sha256": "1238ccafaf977e5c488aca3744d433509996bf905d6fbf6f235638f9752da373",
+        "extraction": "LLMServiceRequest class, including dataclass decorator; original lines preserved"
+      }
+    }
+  },
+  "1.3.5": {
+    "commit": "ef223606208cb24bce68751692c94e8e591e92e9",
+    "sources": {
+      "core-1.3.5.py.source": {
+        "path": "src/plugin_runtime/capabilities/core.py",
+        "sha256": "84132ff9365ca13d66aa47c5eb5a2dead66d862b1d2a1f4d15d188235e27ad84",
+        "git_blob": "51cc511bc87a18b1c6d24707ff777454a7c7f118"
+      },
+      "tasks-1.3.5.py.source": {
+        "path": "src/services/service_task_resolver.py",
+        "sha256": "e6a92d1ef479fcbe261a02e1a895ebd5a609f451c87e7daf621c22144d485979",
+        "git_blob": "e01cddc2ea0faabecd7266125482e723b40d6a28"
+      },
+      "request-1.3.5.py.source": {
+        "path": "src/common/data_models/llm_service_data_models.py",
+        "source_sha256": "8e7f50c14d32acd087c1b49e274b4d744b1f50a5f8ec768ed2ca68e81825d3c7",
+        "sha256": "1238ccafaf977e5c488aca3744d433509996bf905d6fbf6f235638f9752da373",
+        "extraction": "LLMServiceRequest class, including dataclass decorator; original lines preserved"
+      }
+    }
+  }
+}

@@ -92,7 +92,7 @@ v0.1.7 Tweet Content Provider（L4 展示层 enrichment）：
   逻辑原样保留。
 
 v0.1.8 LLM 解读（quality-first 展示层 enrichment）：
-- 复用 MaiBot Host 模型任务（ctx.llm.generate），不接独立 API/凭据；
+- 复用 MaiBot Host 模型任务（ctx.call_capability），不接独立 API/凭据；
   model_task/temperature/max_tokens/timeout_seconds/prompt 全部可配置
   （[llm] 段；非法配置在 field_validator/normalize 就近钳制到安全值，
   不硬拒绝加载）。
@@ -281,7 +281,7 @@ VXTWITTER_STATUS_URL = "https://api.vxtwitter.com/thsottiaux/status/{tweet_id}"
 MAX_TWEET_TEXT_CHARS = 2000
 
 # ===== LLM 中文翻译（v0.1.8 enrichment，v0.1.10 改为 translation-only）=====
-# 复用 MaiBot Host 模型任务（ctx.llm.generate），不接独立 API、不维护
+# 复用 MaiBot Host 模型任务（ctx.call_capability），不接独立 API、不维护
 # key/base_url。LLM 只做完整中文翻译的展示层 enrichment，永不参与
 # alert decision；失败/超时/坏 JSON 一律降级为无翻译的既有通知。
 
@@ -367,7 +367,7 @@ class PluginSectionConfig(PluginConfigBase):
 class LLMConfig(PluginConfigBase):
     """中文翻译（LLM enrichment）配置。
 
-    复用 MaiBot Host 模型任务（ctx.llm.generate），不接独立 API。
+    复用 MaiBot Host 模型任务（ctx.call_capability），不接独立 API。
     LLM 只做完整忠实的中文翻译（translation-only），失败/超时/坏 JSON
     自动降级为无翻译的普通通知，永不影响告警本身。
     """
@@ -2817,7 +2817,7 @@ class CodexResetWatcher(MaiBotPlugin):
         完整忠实的中文翻译，时间在翻译中本地化。
 
         - 总预算状态机：timeout_seconds 是首次翻译+可选一次修复共用的
-          monotonic deadline；rpc_timeout_ms 始终使用剩余预算；剩余不足
+          monotonic deadline；call_capability 的 timeout_ms 使用剩余预算；剩余不足
           （<5s）或预算耗尽 → 直接放弃翻译；
         - Host success=False / RPC 异常 → 不修复，直接无翻译（按契约
           只有 JSON 解析/校验失败才允许一次修复重试）；
@@ -2879,12 +2879,13 @@ class CodexResetWatcher(MaiBotPlugin):
                         logger.info("LLM 翻译：并发等待后剩余预算不足，跳过翻译")
                         return None
                     async with asyncio.timeout(span):
-                        result = await self.ctx.llm.generate(
-                            messages,
+                        result = await self.ctx.call_capability(
+                            "llm.generate",
+                            prompt=messages,
                             model=cfg.model_task,
                             temperature=cfg.temperature,
                             max_tokens=cfg.max_tokens,
-                            rpc_timeout_ms=max(1, int(span * 1000)),
+                            timeout_ms=max(1, int(span * 1000)),
                         )
             except TimeoutError:
                 logger.info("LLM 翻译：总预算耗尽，跳过翻译")

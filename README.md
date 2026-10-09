@@ -101,7 +101,8 @@ model_task = "replyer"    # WebUI 推荐选择：replyer / planner / utils
 Host 管理 Playwright、Chromium 与系统库；插件不新增浏览器/Python runtime dependency。
 首次 browser 下载可能较慢，建议先准备 Host 渲染环境。渲染关闭、缺包、缺浏览器、
 下载/RPC/截图或发图失败时按群回退文字。manifest/版本拒绝加载发生在插件运行前，
-此时无法执行 fallback。SDK 2.8.1 有已知模型任务解析回归，建议使用 2.8.2 及以上。
+此时无法执行 fallback。翻译直接调用 Host `llm.generate` capability，仅传
+`model=llm.model_task`，不传 `task_name`，沿用 Host 的模型任务解析；兼容 SDK 2.8.1。
 完整准备方法与降级合同见 [图片通知说明](docs/image-notifications.md)。
 
 ## 多群支持
