@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
+import gzip
 import json
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -20,7 +21,13 @@ NOW = datetime(2026, 10, 9, 13, 6, tzinfo=timezone.utc)
 
 
 def fixture(name):
-    return json.loads((ROOT / (name + ".json")).read_text())
+    path = ROOT / (name + ".json")
+    raw = (
+        path.read_bytes()
+        if path.exists()
+        else gzip.decompress(path.with_suffix(".json.gz").read_bytes())
+    )
+    return json.loads(raw)
 
 
 def corpus_batch():
@@ -55,12 +62,10 @@ def candidate(**changes):
 
 def test_captured_origins_and_twelve_missing_golden():
     for record in fixture("ORIGINS"):
-        assert (
-            hashlib.sha256(
-                (Path(__file__).parent / record["path"]).read_bytes()
-            ).hexdigest()
-            == record["sha256"]
-        )
+        raw = (Path(__file__).parent / record["path"]).read_bytes()
+        if record.get("encoding") == "gzip":
+            raw = gzip.decompress(raw)
+        assert hashlib.sha256(raw).hexdigest() == record["sha256"]
     batch = corpus_batch()
     by_id = {c.tweet_id: c for c in batch.candidates}
     golden = fixture("golden")

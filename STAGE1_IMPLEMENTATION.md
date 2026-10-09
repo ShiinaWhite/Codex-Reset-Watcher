@@ -118,7 +118,8 @@ by several providers remains one candidate and one `tweet:<id>` coverage identit
 
 ## Golden outcomes
 
-Raw public HTTP response bytes captured 2026-10-09 are in
+Public HTTP response bytes captured 2026-10-09 (large bodies losslessly gzip-
+compressed; digest verification uses their unchanged decompressed bytes) are in
 `tests/fixtures/tibo-discovery/`, with exact URL/UTC capture time/SHA256 in
 `ORIGINS.json`. Production state, config, logs and receipt snapshots are excluded.
 The observation clock is frozen at **2026-10-09 13:06 UTC** for reproducible age

@@ -1,39 +1,51 @@
 [
   {
-    "path": "tests/fixtures/tibo-discovery/host_fx_v2_replies.json",
+    "path": "tests/fixtures/tibo-discovery/host_fx_v2_replies.json.gz",
     "sha256": "cd1805e4936ee93defb449f3f8f5d858b1e2d63089ad6e28e4a7b3a4d4c06859",
     "url": "https://api.fxtwitter.com/2/profile/thsottiaux/statuses?count=100&with_replies=true",
-    "captured_at": "2026-10-09T13:06:45.051065+00:00"
+    "captured_at": "2026-10-09T13:06:45.051065+00:00",
+    "encoding": "gzip",
+    "sha256_scope": "uncompressed response bytes"
   },
   {
-    "path": "tests/fixtures/tibo-discovery/fx_replies_page2_retry.json",
+    "path": "tests/fixtures/tibo-discovery/fx_replies_page2_retry.json.gz",
     "sha256": "f73c94cbbac7bab19a2f3a11e8a443a5bded80d5a2ad7a3658b382a4d783be37",
     "url": "https://api.fxtwitter.com/2/profile/thsottiaux/statuses?count=20&with_replies=true&cursor=DAAHCgABHUMOPaF__-4LAAIAAAATMjEwNzcwMDEzOTA2NjU5MzYxMggAAwAAAAIAAA",
-    "captured_at": "2026-10-09T13:09:22.564262+00:00"
+    "captured_at": "2026-10-09T13:09:22.564262+00:00",
+    "encoding": "gzip",
+    "sha256_scope": "uncompressed response bytes"
   },
   {
-    "path": "tests/fixtures/tibo-discovery/fx_replies_page3.json",
+    "path": "tests/fixtures/tibo-discovery/fx_replies_page3.json.gz",
     "sha256": "e3241e7c1a1b00a601d935cc47555ff3b88c3bd318d4a36393c48487632a4901",
     "url": "https://api.fxtwitter.com/2/profile/thsottiaux/statuses?count=20&with_replies=true&cursor=DAAHCgABHUMOPaF__90LAAIAAAATMjEwNzU4NjMzOTg2MDYzMTk4MAgAAwAAAAIAAA",
-    "captured_at": "2026-10-09T13:10:22.046840+00:00"
+    "captured_at": "2026-10-09T13:10:22.046840+00:00",
+    "encoding": "gzip",
+    "sha256_scope": "uncompressed response bytes"
   },
   {
-    "path": "tests/fixtures/tibo-discovery/host_fx_v2_posts.json",
+    "path": "tests/fixtures/tibo-discovery/host_fx_v2_posts.json.gz",
     "sha256": "dc2039705a736e391633b6c5f0d82cd89172973db642024e64daa4be15fd0b1c",
     "url": "https://api.fxtwitter.com/2/profile/thsottiaux/statuses?count=100",
-    "captured_at": "2026-10-09T13:06:45.051648+00:00"
+    "captured_at": "2026-10-09T13:06:45.051648+00:00",
+    "encoding": "gzip",
+    "sha256_scope": "uncompressed response bytes"
   },
   {
-    "path": "tests/fixtures/tibo-discovery/fx_posts_page2.json",
+    "path": "tests/fixtures/tibo-discovery/fx_posts_page2.json.gz",
     "sha256": "f5a4803924665f7347497f1f239d19893745f38823a05b5a29a12540b1e441b3",
     "url": "https://api.fxtwitter.com/2/profile/thsottiaux/statuses?count=20&cursor=DAAHCgABHUMOPZ9__-8LAAIAAAATMjEwNzM3MDg1MjU2NDAyMTU4MggAAwAAAAIAAA",
-    "captured_at": "2026-10-09T13:09:22.563537+00:00"
+    "captured_at": "2026-10-09T13:09:22.563537+00:00",
+    "encoding": "gzip",
+    "sha256_scope": "uncompressed response bytes"
   },
   {
-    "path": "tests/fixtures/tibo-discovery/host_feed.json",
+    "path": "tests/fixtures/tibo-discovery/host_feed.json.gz",
     "sha256": "89aecb4718d805f2f301c75143688e26cfe77902e8c91708ab116033336874c8",
     "url": "https://codex-reset.com/api/feed",
-    "captured_at": "2026-10-09T13:06:45.050237+00:00"
+    "captured_at": "2026-10-09T13:06:45.050237+00:00",
+    "encoding": "gzip",
+    "sha256_scope": "uncompressed response bytes"
   },
   {
     "path": "tests/fixtures/tibo-discovery/host_fx_golden.json",
