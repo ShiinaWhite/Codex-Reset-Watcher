@@ -10,7 +10,7 @@ def test_host_package_loader_imports_sibling_notice_card(tmp_path):
     plugin_dir = tmp_path / "plugins" / "codex-reset.watcher"
     plugin_dir.mkdir(parents=True)
     root = Path(__file__).resolve().parent
-    for name in ("plugin.py", "notice_card.py"):
+    for name in ("plugin.py", "notice_card.py", "tibo_discovery.py"):
         shutil.copyfile(root / name, plugin_dir / name)
 
     # A fresh isolated interpreter prevents repository paths or cached top-level

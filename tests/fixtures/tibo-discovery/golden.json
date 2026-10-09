@@ -1,0 +1,74 @@
+[
+  {
+    "tweet_id": "2107504197012988007",
+    "published_at": "2026-10-06T16:12:10+00:00",
+    "kind": "self-reply",
+    "within_48h": false
+  },
+  {
+    "tweet_id": "2107548725359104441",
+    "published_at": "2026-10-06T19:09:07+00:00",
+    "kind": "quote + own comment",
+    "within_48h": false
+  },
+  {
+    "tweet_id": "2107573405553938664",
+    "published_at": "2026-10-06T20:47:11+00:00",
+    "kind": "quote + own comment",
+    "within_48h": false
+  },
+  {
+    "tweet_id": "2107574912349303197",
+    "published_at": "2026-10-06T20:53:10+00:00",
+    "kind": "quote + own comment",
+    "within_48h": false
+  },
+  {
+    "tweet_id": "2107576143285219799",
+    "published_at": "2026-10-06T20:58:04+00:00",
+    "kind": "self-reply",
+    "within_48h": false
+  },
+  {
+    "tweet_id": "2107597780352950624",
+    "published_at": "2026-10-06T22:24:02+00:00",
+    "kind": "original",
+    "within_48h": false
+  },
+  {
+    "tweet_id": "2107599996225007892",
+    "published_at": "2026-10-06T22:32:51+00:00",
+    "kind": "self-reply",
+    "within_48h": false
+  },
+  {
+    "tweet_id": "2107676900894417277",
+    "published_at": "2026-10-07T03:38:26+00:00",
+    "kind": "self-reply",
+    "within_48h": false
+  },
+  {
+    "tweet_id": "2107912709715132482",
+    "published_at": "2026-10-07T19:15:27+00:00",
+    "kind": "quote + own comment",
+    "within_48h": true
+  },
+  {
+    "tweet_id": "2108084615349170480",
+    "published_at": "2026-10-08T06:38:33+00:00",
+    "kind": "quote + own comment",
+    "within_48h": true
+  },
+  {
+    "tweet_id": "2108275041276420573",
+    "published_at": "2026-10-08T19:15:14+00:00",
+    "kind": "quote + own comment",
+    "within_48h": true
+  },
+  {
+    "tweet_id": "2108349826727588000",
+    "published_at": "2026-10-09T00:12:24+00:00",
+    "kind": "original",
+    "within_48h": true
+  }
+]

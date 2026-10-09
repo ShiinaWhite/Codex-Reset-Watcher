@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 import plugin as module
-from test_tibo_render import PNG, feed, ready, wire_images
+from test_tibo_render import PNG, feed, ready, wire_images, tibo_batch
 from test_watcher import _drain_inflight, _gstate
 
 G1, G2 = "100000001", "100000002"
@@ -33,7 +33,11 @@ def setup(tmp_path, monkeypatch):
     wire_images(p)
 
     async def enrich(tweet_id, payload):
-        t = next(t for t in payload["tweets"] if t["id"] == tweet_id)
+        t = (
+            payload.hint
+            if isinstance(payload, module.TweetCandidate)
+            else next(t for t in payload["tweets"] if t["id"] == tweet_id)
+        )
         content = module.TweetContent(t["text"], "feed", "full")
         content.quote = t.get("quote")
         return content
@@ -112,11 +116,11 @@ def test_faster_newer_preparation_cannot_overtake(
         ) == timedelta(seconds=16)
         assert module.is_tibo_main_post(NEWER)
         if split_cycle:
-            await p._process_tibo_posts(feed(OLDER), [G1, G2])
+            await p._process_tibo_posts(tibo_batch(feed(OLDER)), [G1, G2])
             await asyncio.sleep(0)
-            await p._process_tibo_posts(feed(NEWER, OLDER), [G1, G2])
+            await p._process_tibo_posts(tibo_batch(feed(NEWER, OLDER)), [G1, G2])
         else:
-            await p._process_tibo_posts(feed(NEWER, OLDER), [G1, G2])
+            await p._process_tibo_posts(tibo_batch(feed(NEWER, OLDER)), [G1, G2])
         try:
             await asyncio.wait_for(new_ready.wait(), timeout=1)
             assert prepared == [NEW]
@@ -137,7 +141,7 @@ def test_faster_newer_preparation_cannot_overtake(
             }
         assert len(p.ctx.render.htmls) == 2  # Shared render, not one per group.
         p._load_state()
-        await p._process_tibo_posts(feed(NEWER, OLDER), [G1, G2])
+        await p._process_tibo_posts(tibo_batch(feed(NEWER, OLDER)), [G1, G2])
         await drain(p)
         assert len(sends) == 4  # Success-only receipts still suppress replays.
 
@@ -169,7 +173,7 @@ def test_one_group_blocked_then_failed_does_not_block_other_group(
             return True
 
         p._send_group_notice = send
-        await p._process_tibo_posts(feed(NEWER, OLDER), [G1, G2])
+        await p._process_tibo_posts(tibo_batch(feed(NEWER, OLDER)), [G1, G2])
         try:
             await asyncio.wait_for(other_done.wait(), timeout=1)
             assert (G1, NEW) not in attempts
@@ -189,7 +193,7 @@ def test_one_group_blocked_then_failed_does_not_block_other_group(
             return True
 
         p._send_group_notice = retry
-        await p._process_tibo_posts(feed(NEWER, OLDER), [G1, G2])
+        await p._process_tibo_posts(tibo_batch(feed(NEWER, OLDER)), [G1, G2])
         await drain(p)
         assert attempts[-1] == (G1, OLD)
         assert len(attempts) == 5
@@ -215,7 +219,7 @@ def test_earlier_preparation_failure_releases_all_group_barriers(
     p._enrich_content = fail
 
     async def scenario():
-        await p._process_tibo_posts(feed(NEWER, OLDER), [G1, G2])
+        await p._process_tibo_posts(tibo_batch(feed(NEWER, OLDER)), [G1, G2])
         if failure == "cancel-before-start":
             p._inflight[f"tibo:{OLD}"]["task"].cancel()
         await drain(p)
@@ -240,7 +244,7 @@ def test_chronology_uses_parsed_instant_not_iso_string(tmp_path, monkeypatch):
     older = {**OLDER, "at": "2026-10-08T03:19:17+08:00"}
 
     async def scenario():
-        await p._process_tibo_posts(feed(NEWER, older), [G1, G2])
+        await p._process_tibo_posts(tibo_batch(feed(NEWER, older)), [G1, G2])
         await drain(p)
         for gid in [G1, G2]:
             assert [tid for g, tid in attempts if g == gid] == [OLD, NEW]
@@ -265,7 +269,7 @@ def test_waiting_tibo_does_not_hold_delivery_lock_for_other_lanes(
             return await original(tid, payload)
 
         p._enrich_content = enrich
-        await p._process_tibo_posts(feed(NEWER, OLDER), [G1, G2])
+        await p._process_tibo_posts(tibo_batch(feed(NEWER, OLDER)), [G1, G2])
         try:
             await asyncio.wait_for(newer_ready.wait(), 1)
             await asyncio.wait_for(
@@ -297,7 +301,7 @@ def test_parent_cancellation_during_send_releases_newer(tmp_path, monkeypatch):
             return True
 
         p._send_group_notice = send
-        await p._process_tibo_posts(feed(NEWER, OLDER), [G1, G2])
+        await p._process_tibo_posts(tibo_batch(feed(NEWER, OLDER)), [G1, G2])
         await asyncio.wait_for(sending.wait(), 1)
         p._inflight[f"tibo:{OLD}"]["task"].cancel()
         await drain(p)
@@ -329,7 +333,7 @@ def test_cancelling_newer_waiter_does_not_cancel_older(tmp_path, monkeypatch):
 
         p._enrich_content = enrich
         monkeypatch.setattr(module, "render_card", capture)
-        await p._process_tibo_posts(feed(NEWER, OLDER), [G1, G2])
+        await p._process_tibo_posts(tibo_batch(feed(NEWER, OLDER)), [G1, G2])
         await asyncio.wait_for(rendered.wait(), 1)
         task = p._inflight[f"tibo:{NEW}"]["task"]
         task.cancel()
@@ -353,7 +357,7 @@ def test_text_and_render_failure_fallback_keep_order_and_links(
     renderer, images = wire_images(p, render_failure=True)
 
     async def scenario():
-        await p._process_tibo_posts(feed(NEWER, OLDER), [G1, G2])
+        await p._process_tibo_posts(tibo_batch(feed(NEWER, OLDER)), [G1, G2])
         await drain(p)
         for gid in [G1, G2]:
             texts = [
@@ -375,7 +379,9 @@ def test_unknown_time_is_not_registered_as_barrier(tmp_path, monkeypatch, at):
     p = setup(tmp_path, monkeypatch)
 
     async def scenario():
-        await p._process_tibo_posts(feed({**OLDER, "at": at}, NEWER), [G1, G2])
+        await p._process_tibo_posts(
+            tibo_batch(feed({**OLDER, "at": at}, NEWER)), [G1, G2]
+        )
         await drain(p)
         for gid in [G1, G2]:
             assert receipts(p, gid) == {NEW}
@@ -416,7 +422,7 @@ def test_finished_group_can_route_while_other_tibo_group_is_sending(
         p.ctx.send.image = image
         p.ctx.send.text = failed_text
         payload = feed(OLDER)
-        await p._process_tibo_posts(payload, [G1, G2])
+        await p._process_tibo_posts(tibo_batch(payload), [G1, G2])
         attempt = p._inflight[f"tibo:{OLD}"]
         try:
             await asyncio.wait_for(g2_sending.wait(), 1)

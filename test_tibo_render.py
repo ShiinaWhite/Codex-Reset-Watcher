@@ -38,6 +38,61 @@ def feed(*posts, events=None):
     }
 
 
+def tibo_batch(payload):
+    """Existing delivery fixtures enter the normalized boundary with known metadata."""
+    from tibo_discovery import (
+        DiscoveryBatch,
+        TweetCandidate,
+        TweetMetadata,
+        parsed_time,
+    )
+
+    if (
+        not isinstance(payload, dict)
+        or payload.get("stale") is True
+        or payload.get("profile", {}).get("handle") != "thsottiaux"
+        or payload.get("source_scope") != "timeline"
+    ):
+        return DiscoveryBatch()
+    rows = []
+    for row in payload.get("tweets", []):
+        refs = row.get("referenced_tweets") or []
+        target = row.get("replying_to")
+        target = (
+            target.strip().removeprefix("@").casefold()
+            if isinstance(target, str)
+            else None
+        )
+        metadata = TweetMetadata(
+            True
+            if any(r.get("type") == "replied_to" for r in refs)
+            else row.get("is_reply"),
+            target,
+            row.get("in_reply_to_tweet_id"),
+            bool(
+                row.get("is_retweet")
+                or row.get("is_repost")
+                or row.get("retweeted_status")
+                or row.get("reposted_by")
+                or any(r.get("type") == "retweeted" for r in refs)
+            ),
+            "verified",
+        )
+        if not str(row.get("id", "")).isascii() or not str(row.get("id", "")).isdigit():
+            continue
+        rows.append(
+            TweetCandidate(
+                str(row["id"]),
+                parsed_time(row.get("at")),
+                ("fixture",),
+                row.get("text", ""),
+                metadata,
+                row,
+            )
+        )
+    return DiscoveryBatch(tuple(rows), "ok")
+
+
 def ready(tmp_path, monkeypatch, **config):
     p = _make_plugin(tmp_path, **config)
     monkeypatch.setattr(module, "_utcnow", lambda: NOW)
@@ -58,7 +113,7 @@ def ready(tmp_path, monkeypatch, **config):
 
 def run_posts(p, payload):
     async def scenario():
-        await p._process_tibo_posts(payload, p._target_groups())
+        await p._process_tibo_posts(tibo_batch(payload), p._target_groups())
         await _drain_inflight(p)
 
     asyncio.run(scenario())
@@ -129,7 +184,7 @@ def test_baseline_never_absorbs_existing_alert(tmp_path, monkeypatch):
     p._get_json = no_network
 
     async def scenario():
-        await p._process_tibo_posts(feed(post()), [GID])
+        await p._process_tibo_posts(tibo_batch(feed(post())), [GID])
         assert ID in _gstate(p)["tibo_seen_ids"]
         assert not _gstate(p).get("tibo_delivered_ids")
         await p._process_upstream_alert(forecast(), [GID], feed(post()))
@@ -160,14 +215,14 @@ def test_cross_lane_absorption_orders_reload(tmp_path, monkeypatch, order):
         if order == "old_first":
             await p._process_upstream_alert(forecast(), [GID], payload)
             await _drain_inflight(p)
-        await p._process_tibo_posts(payload, [GID])
+        await p._process_tibo_posts(tibo_batch(payload), [GID])
         if order == "parallel":
             await p._process_upstream_alert(forecast(), [GID], payload)
         await _drain_inflight(p)
         p._load_state()
         await p._process_upstream_alert(forecast(), [GID], payload)
         await _drain_inflight(p)
-        await p._process_tibo_posts(payload, [GID])
+        await p._process_tibo_posts(tibo_batch(payload), [GID])
         await _drain_inflight(p)
 
     asyncio.run(scenario())
@@ -238,7 +293,7 @@ def test_pending_failure_never_becomes_receipt_and_old_lane_recovers(
             return module.TweetContent("text", "feed", "full")
 
         p._enrich_content = delayed
-        await p._process_tibo_posts(feed(post()), [GID])
+        await p._process_tibo_posts(tibo_batch(feed(post())), [GID])
         await entered.wait()
         await p._process_upstream_alert(forecast(), [GID], feed(post()))
         await asyncio.sleep(0.02)
@@ -504,7 +559,7 @@ def test_all_active_lanes_image_only(tmp_path, monkeypatch, lane):
 
     async def scenario():
         if lane == "tibo":
-            await p._process_tibo_posts(feed(post()), [GID])
+            await p._process_tibo_posts(tibo_batch(feed(post())), [GID])
         elif lane == "global":
             await p._process_upstream_alert(
                 _forecast(GLOBAL_IDS[1]), [GID], _feed(GLOBAL_IDS[1])
@@ -569,7 +624,7 @@ def test_cancelled_tibo_inflight_has_no_receipts_and_alert_can_retry(
             await asyncio.Event().wait()
 
         p._enrich_content = blocked
-        await p._process_tibo_posts(feed(post()), [GID])
+        await p._process_tibo_posts(tibo_batch(feed(post())), [GID])
         await entered.wait()
         await p._cancel_inflight()
         assert not p._inflight
@@ -614,7 +669,7 @@ def test_full_push_without_timeline_retains_actual_upstream_system_event(
     )
 
     async def scenario():
-        await p._process_tibo_posts(None, [GID])
+        await p._process_tibo_posts(tibo_batch(None), [GID])
         await p._process_push_banked(payload, [GID], _feed(BANKED_ID))
         await _drain_inflight(p)
 
@@ -638,7 +693,7 @@ def test_actual_existing_pipelines_absorb_tibo_delivery(tmp_path, monkeypatch, l
     tid = payload["tweets"][0]["id"]
 
     async def scenario():
-        await p._process_tibo_posts(payload, [GID])
+        await p._process_tibo_posts(tibo_batch(payload), [GID])
         await _drain_inflight(p)
         if lane == "push-banked":
             alert = {

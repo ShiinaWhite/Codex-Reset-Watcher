@@ -29,6 +29,7 @@ def check_tree_hygiene(sizes):
         if name in {
             "plugin.py",
             "notice_card.py",
+            "tibo_discovery.py",
             "_manifest.json",
             "LICENSE",
         } or name.startswith("templates/"):

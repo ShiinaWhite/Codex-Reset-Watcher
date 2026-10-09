@@ -246,8 +246,24 @@ from pydantic import field_validator
 
 if __package__:
     from .notice_card import NoticeCard, render_card
+    from .tibo_discovery import (
+        DiscoveryBatch,
+        FxTiboDiscovery,
+        TweetCandidate,
+        codex_hints,
+        union_batches,
+        verify_candidate,
+    )
 else:
     from notice_card import NoticeCard, render_card
+    from tibo_discovery import (
+        DiscoveryBatch,
+        FxTiboDiscovery,
+        TweetCandidate,
+        codex_hints,
+        union_batches,
+        verify_candidate,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -1916,12 +1932,21 @@ class CodexResetWatcher(MaiBotPlugin):
         # /api/push/notification 是 latest-only、被覆盖即不可恢复的 surface，
         # 其采样不得串行等待 feed/forecast（各自 12s 超时，串行最坏把采样
         # 推迟 24s，扩大已确认不可恢复的 Banked 漏报窗口）。
-        feed, forecast, notification = await asyncio.gather(
+        feed, forecast, notification, discovery = await asyncio.gather(
             self._fetch_feed(),
             self._fetch_forecast(),
             self._fetch_push_notification(),
+            self._fetch_tibo_discovery(),
         )
-        await self._process_tibo_posts(feed, groups)
+        candidates = union_batches(discovery, codex_hints(feed))
+        if self.config.watcher.tibo_full_push:
+            logger.info(
+                "Tibo discovery union: status=%s fallback_hints=%s candidates=%s",
+                candidates.status,
+                candidates.fallback_used,
+                len(candidates.candidates),
+            )
+        await self._process_tibo_posts(candidates, groups)
         await self._process_upstream_alert(forecast, groups, feed)
         await self._process_push_banked(notification, groups, feed)
         await self._process_feed_signals(feed, groups, beijing, forecast)
@@ -1931,6 +1956,20 @@ class CodexResetWatcher(MaiBotPlugin):
         # active_plan 清理；_maybe_notify 及三个 Tibo formatter 暂留
         # （死代码，回滚参考），生产路径不再调用。
         await self._fetch_conclusion(feed)
+
+    async def _fetch_tibo_discovery(self) -> DiscoveryBatch:
+        if not self.config.watcher.tibo_full_push:
+            return DiscoveryBatch()
+        batch = await FxTiboDiscovery(self._get_json).fetch_recent(_utcnow())
+        logger.info(
+            "Tibo discovery: status=%s requests=%s elapsed_ms=%s candidates=%s issues=%s",
+            batch.status,
+            batch.request_count,
+            batch.elapsed_ms,
+            len(batch.candidates),
+            batch.issues,
+        )
+        return batch
 
     async def _fetch_feed(self) -> dict[str, Any] | None:
         try:
@@ -1995,32 +2034,43 @@ class CodexResetWatcher(MaiBotPlugin):
             remaining.append(gid)
         return remaining
 
-    async def _process_tibo_posts(self, feed: Any, groups: list[str]) -> None:
-        if not self.config.watcher.tibo_full_push or not isinstance(feed, dict):
+    async def _process_tibo_posts(
+        self, batch: DiscoveryBatch, groups: list[str]
+    ) -> None:
+        if not self.config.watcher.tibo_full_push:
             return
-        profile = feed.get("profile")
-        if (
-            feed.get("stale") is True
-            or not isinstance(profile, dict)
-            or profile.get("handle") != "thsottiaux"
-            or feed.get("source_scope") != "timeline"
-        ):
-            return
-        tweets = feed.get("tweets")
-        if not isinstance(tweets, list) or not tweets:
-            return
-        posts = [
-            t
-            for t in tweets
-            if is_tibo_main_post(t) and str(t.get("id") or "").isdigit()
-        ]
+        # Reliable exclusions never become chronological participants. Unknown
+        # relations may become eligible after bounded verification in the pipeline.
+        posts = []
+        for candidate in batch.candidates:
+            metadata = candidate.metadata
+            if metadata.is_repost is True or (
+                metadata.is_reply is True
+                and metadata.replying_to
+                and metadata.replying_to != "thsottiaux"
+            ):
+                continue
+            if (
+                candidate.text
+                and not re.sub(r"https?://\S+", "", candidate.text).strip()
+            ):
+                continue
+            if metadata.status == "verified" and not is_tibo_main_post(
+                candidate.as_post()
+            ):
+                continue
+            posts.append(candidate)
         active = []
         async with self._state_lock:
             changed = False
             for gid in groups:
                 entry = self._group_state(gid)
                 if not entry.get("tibo_baseline_done"):
-                    entry["tibo_seen_ids"] = sorted({str(t["id"]) for t in posts})
+                    if batch.status != "ok" or not posts:
+                        continue
+                    entry["tibo_seen_ids"] = sorted(
+                        {t.tweet_id for t in posts if t.metadata.status == "verified"}
+                    )
                     entry["tibo_baseline_done"] = True
                     changed = True
                 else:
@@ -2029,12 +2079,12 @@ class CodexResetWatcher(MaiBotPlugin):
                 self._save_state()
         # Compare actual instants; different UTC offsets need not sort as strings.
         # Unknown times wait for metadata repair, as before.
-        timed_posts = [(_parse_iso(t.get("at")), t) for t in posts]
+        timed_posts = [(t.published_at, t) for t in posts]
         timed_posts = [(at, t) for at, t in timed_posts if at is not None]
         for moment, tweet in sorted(
-            timed_posts, key=lambda item: (item[0], str(item[1]["id"]))
+            timed_posts, key=lambda item: (item[0], item[1].tweet_id)
         ):
-            tweet_id = str(tweet["id"])
+            tweet_id = tweet.tweet_id
             pending = [
                 gid
                 for gid in active
@@ -2044,6 +2094,8 @@ class CodexResetWatcher(MaiBotPlugin):
             if not pending:
                 continue
             if _utcnow() - moment > timedelta(hours=MAX_SIGNAL_AGE_HOURS):
+                if tweet.metadata.status != "verified":
+                    continue
                 async with self._state_lock:
                     for gid in pending:
                         entry = self._group_state(gid)
@@ -2063,7 +2115,7 @@ class CodexResetWatcher(MaiBotPlugin):
                 }
                 self._inflight[key] = attempt
                 task = asyncio.create_task(
-                    self._tibo_pipeline(tweet, feed, pending), name=key
+                    self._tibo_pipeline(tweet, pending), name=key
                 )
                 attempt["task"] = task
                 # A task cancelled before its coroutine starts never enters finally.
@@ -2120,15 +2172,21 @@ class CodexResetWatcher(MaiBotPlugin):
         finally:
             attempt["delivery_done"][gid].set()
 
-    async def _tibo_pipeline(self, tweet: dict, feed: dict, groups: list[str]) -> None:
-        tweet_id = str(tweet["id"])
+    async def _tibo_pipeline(self, tweet: TweetCandidate, groups: list[str]) -> None:
+        tweet_id = tweet.tweet_id
         key = f"tibo:{tweet_id}"
         attempt = self._inflight[key]
         try:
-            content = await self._enrich_content(tweet_id, feed)
+            if tweet.metadata.status != "verified":
+                tweet = await verify_candidate(tweet, self._get_json)
+                if tweet.metadata.status != "verified" or not is_tibo_main_post(
+                    tweet.as_post()
+                ):
+                    return
+            content = await self._enrich_content(tweet_id, tweet)
             url = f"https://x.com/thsottiaux/status/{tweet_id}"
             translation = await self._llm_translate_content(
-                tweet_id, url, str(tweet.get("at") or ""), content
+                tweet_id, url, tweet.published_at.isoformat(), content
             )
             message = build_full_notice(
                 "Tibo 动态",
@@ -2138,7 +2196,12 @@ class CodexResetWatcher(MaiBotPlugin):
                 translation,
             )
             card = await self._notice_card(
-                "Tibo 动态", url, content, translation, str(tweet.get("at") or ""), True
+                "Tibo 动态",
+                url,
+                content,
+                translation,
+                tweet.published_at.isoformat(),
+                True,
             )
             # Render concurrently with other posts, then share the completed cache
             # across groups. A render failure retains the existing text fallback.
@@ -2981,7 +3044,25 @@ class CodexResetWatcher(MaiBotPlugin):
         """
         best: TweetContent | None = None
         quote: dict | None = None
-        feed_quote = self._feed_quote(tweet_id, feed)
+        if isinstance(feed, TweetCandidate):
+            hint = feed.hint or {}
+            feed_quote = _quote_from_tweet(hint)
+        else:
+            # Preserve the old lanes' text fallback and stale quote guard.
+            hint = (
+                next(
+                    (
+                        row
+                        for row in (feed.get("tweets") or [])
+                        if isinstance(row, dict)
+                        and str(row.get("id") or "") == tweet_id
+                    ),
+                    {},
+                )
+                if tweet_id and isinstance(feed, dict)
+                else {}
+            )
+            feed_quote = self._feed_quote(tweet_id, feed)
         seek_quote = self.config.watcher.display_mode == "image"
         if tweet_id:
             providers = (
@@ -3037,18 +3118,19 @@ class CodexResetWatcher(MaiBotPlugin):
                     )
         # feed 同 id 推文兜底（真实 Tweet 文本）：与既有候选比较取优，
         # 而非机械取先到者。
-        if tweet_id and isinstance(feed, dict):
-            for tweet in feed.get("tweets") or []:
-                if isinstance(tweet, dict) and str(tweet.get("id") or "") == tweet_id:
-                    text = str(tweet.get("text") or "").strip()
-                    if text:
-                        candidate = TweetContent(text, "feed", "unknown")
-                        best = _better_content(best, candidate)
-                        logger.info(
-                            "Tweet 全文：provider=feed completeness=unknown len=%d（候选比较）",
-                            len(text),
-                        )
-                    break
+        text = str(hint.get("text") or "").strip()
+        if text:
+            candidate = TweetContent(
+                text,
+                "discovery" if isinstance(feed, TweetCandidate) else "feed",
+                "unknown",
+            )
+            best = _better_content(best, candidate)
+            logger.info(
+                "Tweet 全文：provider=%s completeness=unknown len=%d（候选比较）",
+                candidate.source,
+                len(text),
+            )
         # review-fix：forecast/event summary 是摘要而非逐字原文——
         # 不再作为兜底候选（不展示、不翻译）。
         if best is None:
