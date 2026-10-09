@@ -147,7 +147,7 @@ def fx_candidate(
     return TweetCandidate(tid, at, (source,), text, metadata, row)
 
 
-def codex_hints(feed: Any) -> DiscoveryBatch:
+def codex_hints(feed: Any, *, now: datetime | None = None) -> DiscoveryBatch:
     if not isinstance(feed, dict) or feed.get("stale") is not False:
         return DiscoveryBatch(issues=("codex unavailable/stale",))
     profile = feed.get("profile")
@@ -165,10 +165,19 @@ def codex_hints(feed: Any) -> DiscoveryBatch:
         for row in rows:
             if not isinstance(row, dict) or not tweet_id(row.get("id")):
                 continue
+            at = parsed_time(row.get("at"))
+            # Cross-check the same recent window as the primary, not Codex's
+            # unrelated older product history. Unknown times remain untrusted.
+            if (
+                now is not None
+                and at is not None
+                and at < now - timedelta(hours=LOOKBACK_HOURS)
+            ):
+                continue
             candidates.append(
                 TweetCandidate(
                     row["id"],
-                    parsed_time(row.get("at")),
+                    at,
                     ("codex-reset",),
                     row.get("text") if isinstance(row.get("text"), str) else "",
                     hint=row,
@@ -178,10 +187,19 @@ def codex_hints(feed: Any) -> DiscoveryBatch:
     return DiscoveryBatch(tuple(candidates), "partial", fallback_used=True)
 
 
-def union_batches(*batches: DiscoveryBatch) -> DiscoveryBatch:
+def union_batches(
+    *batches: DiscoveryBatch, complementary: bool = False
+) -> DiscoveryBatch:
+    # Ordinary and with-replies are complementary surfaces of one provider;
+    # an external cross-check adding IDs disproves the primary's completeness.
+    primary = batches[0] if batches else DiscoveryBatch()
+    primary_ids = {c.tweet_id for c in primary.candidates}
+    discrepancies = []
     merged: dict[str, TweetCandidate] = {}
-    for batch in batches:
+    for index, batch in enumerate(batches):
         for new in batch.candidates:
+            if index and not complementary and new.tweet_id not in primary_ids:
+                discrepancies.append("cross-check adds " + new.tweet_id)
             old = merged.get(new.tweet_id)
             if old is None:
                 merged[new.tweet_id] = new
@@ -201,6 +219,12 @@ def union_batches(*batches: DiscoveryBatch) -> DiscoveryBatch:
                     )
                 )
             )
+            if conflict or (
+                old.published_at is not None
+                and new.published_at is not None
+                and old.published_at != new.published_at
+            ):
+                discrepancies.append("metadata/time discrepancy " + new.tweet_id)
             merged[new.tweet_id] = replace(
                 chosen,
                 published_at=chosen.published_at
@@ -215,7 +239,6 @@ def union_batches(*batches: DiscoveryBatch) -> DiscoveryBatch:
                     sorted(set(old.discovery_sources + new.discovery_sources))
                 ),
             )
-    primary = batches[0] if batches else DiscoveryBatch()
     rows = sorted(
         merged.values(),
         key=lambda c: (
@@ -226,8 +249,12 @@ def union_batches(*batches: DiscoveryBatch) -> DiscoveryBatch:
     return replace(
         primary,
         candidates=tuple(rows),
+        status="partial"
+        if primary.status == "ok" and discrepancies
+        else primary.status,
         fallback_used=any("codex-reset" in c.discovery_sources for c in rows),
-        issues=tuple(issue for b in batches for issue in b.issues),
+        issues=tuple(issue for b in batches for issue in b.issues)
+        + tuple(sorted(set(discrepancies))),
     )
 
 
@@ -324,10 +351,10 @@ class FxTiboDiscovery:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
-        merged = union_batches(*batches)
+        merged = union_batches(*batches, complementary=True)
         status = (
             "ok"
-            if all(b.status == "ok" for b in batches)
+            if all(b.status == "ok" for b in batches) and merged.status == "ok"
             else ("partial" if merged.candidates else "unavailable")
         )
         return replace(
@@ -339,83 +366,92 @@ class FxTiboDiscovery:
 
 
 async def verify_candidate(
-    candidate: TweetCandidate, get_json: GetJSON
+    candidate: TweetCandidate,
+    get_json: GetJSON,
+    *,
+    semaphore: asyncio.Semaphore | None = None,
 ) -> TweetCandidate:
     """Unknown relation gets at most two GETs within one verification budget."""
     async with asyncio.timeout(VERIFICATION_BUDGET_SECONDS):
-        for source, url in (
-            ("fxtwitter", f"https://api.fxtwitter.com/status/{candidate.tweet_id}"),
-            (
-                "vxtwitter",
-                f"https://api.vxtwitter.com/thsottiaux/status/{candidate.tweet_id}",
-            ),
-        ):
-            try:
-                payload = await get_json(url, VERIFICATION_BUDGET_SECONDS)
-                if source == "fxtwitter":
-                    if not isinstance(payload, dict) or payload.get("code") != 200:
-                        continue
-                    resolved = fx_candidate(payload.get("tweet"), source, legacy=True)
-                else:
-                    if (
-                        not isinstance(payload, dict)
-                        or payload.get("user_screen_name") != HANDLE
-                    ):
-                        continue
-                    url = urlparse(str(payload.get("tweetURL") or ""))
-                    if (
-                        url.scheme != "https"
-                        or url.hostname not in {"x.com", "twitter.com"}
-                        or url.path != f"/{HANDLE}/status/{candidate.tweet_id}"
-                    ):
-                        continue
-                    resolved = fx_candidate(
-                        {
-                            "id": payload.get("tweetID"),
-                            "text": payload.get("text"),
-                            "created_timestamp": payload.get("date_epoch"),
-                            "author": {"screen_name": HANDLE},
-                            **(
-                                {
-                                    "replying_to": payload["replyingTo"],
-                                    "replying_to_status": payload.get("replyingToID"),
-                                }
-                                if "replyingTo" in payload
-                                else {}
-                            ),
-                            **(
-                                {
-                                    "reposted_by": None
-                                    if payload["retweetURL"] is None
-                                    else {}
-                                }
-                                if "retweetURL" in payload
-                                else {}
-                            ),
-                        },
-                        source,
-                        legacy=True,
-                        check_author_id=False,
-                    )
-                    if resolved:
-                        resolved = replace(resolved, hint=payload)
+        # The total budget includes waiting for the Watcher's shared capacity.
+        async with semaphore or asyncio.Semaphore(1):
+            return await _verify_candidate(candidate, get_json)
+
+
+async def _verify_candidate(
+    candidate: TweetCandidate, get_json: GetJSON
+) -> TweetCandidate:
+    for source, url in (
+        ("fxtwitter", f"https://api.fxtwitter.com/status/{candidate.tweet_id}"),
+        (
+            "vxtwitter",
+            f"https://api.vxtwitter.com/thsottiaux/status/{candidate.tweet_id}",
+        ),
+    ):
+        try:
+            payload = await get_json(url, VERIFICATION_BUDGET_SECONDS)
+            if source == "fxtwitter":
+                if not isinstance(payload, dict) or payload.get("code") != 200:
+                    continue
+                resolved = fx_candidate(payload.get("tweet"), source, legacy=True)
+            else:
                 if (
-                    resolved
-                    and resolved.tweet_id == candidate.tweet_id
-                    and resolved.metadata.status == "verified"
-                    and resolved.published_at == candidate.published_at
+                    not isinstance(payload, dict)
+                    or payload.get("user_screen_name") != HANDLE
                 ):
-                    return replace(
-                        resolved,
-                        discovery_sources=tuple(
-                            sorted(
-                                set(
-                                    candidate.discovery_sources
-                                    + resolved.discovery_sources
-                                )
-                            )
+                    continue
+                url = urlparse(str(payload.get("tweetURL") or ""))
+                if (
+                    url.scheme != "https"
+                    or url.hostname not in {"x.com", "twitter.com"}
+                    or url.path != f"/{HANDLE}/status/{candidate.tweet_id}"
+                ):
+                    continue
+                resolved = fx_candidate(
+                    {
+                        "id": payload.get("tweetID"),
+                        "text": payload.get("text"),
+                        "created_timestamp": payload.get("date_epoch"),
+                        "author": {"screen_name": HANDLE},
+                        **(
+                            {
+                                "replying_to": payload["replyingTo"],
+                                "replying_to_status": payload.get("replyingToID"),
+                            }
+                            if "replyingTo" in payload
+                            else {}
                         ),
-                    )
-            except Exception:
-                continue
+                        **(
+                            {
+                                "reposted_by": None
+                                if payload["retweetURL"] is None
+                                else {}
+                            }
+                            if "retweetURL" in payload
+                            else {}
+                        ),
+                    },
+                    source,
+                    legacy=True,
+                    check_author_id=False,
+                )
+                if resolved:
+                    resolved = replace(resolved, hint=payload)
+            if (
+                resolved
+                and resolved.tweet_id == candidate.tweet_id
+                and resolved.metadata.status == "verified"
+            ):
+                return replace(
+                    resolved,
+                    discovery_sources=tuple(
+                        sorted(
+                            set(
+                                candidate.discovery_sources + resolved.discovery_sources
+                            )
+                        )
+                    ),
+                )
+        except Exception:
+            continue
     return candidate

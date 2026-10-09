@@ -29,11 +29,13 @@ Stage 2/3 are not implemented.
   `1953337039510003712`. Other-author thread context is filtered. Malformed same-
   author rows invalidate completeness; HTTP 200 with bad code/schema is failure.
 - Fresh Codex timeline `tweets[]` and `radar_context[]` are untrusted relation
-  hints. Missing/stale/provenance-invalid feed contributes no candidates. The
+  hints, restricted in the poll adapter to the same recent 72h window as primary. Missing/stale/provenance-invalid feed contributes no candidates. The
   hint adapter always has partial coverage, even when its arrays are nonempty.
 - Tweet ID union removes cross-page/cross-provider duplicates. Verified Fx
   metadata wins over Codex hints. Conflicting verified relations or times require
-  re-verification. Candidates are sorted by parsed instants, not raw strings or
+  re-verification. Novel cross-check IDs or known time discrepancies downgrade
+  combined coverage to partial. Ordinary + replies are explicitly complementary
+  surfaces; their union is complete only if both surfaces complete without conflict. Candidates are sorted by parsed instants, not raw strings or
   provider order. Parent timestamps do not terminate a page early.
 
 Core `_process_tibo_posts(batch, groups)` consumes normalized objects, with no
@@ -42,7 +44,9 @@ normalization. Reliable reply-to-other, repost and URL-only exclusions are
 filtered before creating chronological participants. Relation-unknown candidates
 may participate while bounded verification runs; exclusion, unresolved relation,
 exception, timeout or cancellation releases the existing per-group barrier and
-writes no seen/receipt. Unknown expired candidates also write no seen.
+writes no seen/receipt. Ordinary unknown expired candidates also write no seen. Conflicting times can
+be repaired even when the initial timestamp appears expired; the authoritative
+single-post timestamp is then subject to the original 48h guard.
 
 There is no unnecessary new combined enrichment class: the normalized candidate
 and verified relation travel alongside existing `TweetContent` (body/source/
@@ -50,10 +54,11 @@ completeness/quote/poll) into the existing translation/card/delivery pipeline.
 The adapter owns structural relation decisions; existing enrichment owns full
 body/quote/poll repair; presentation owns translations and cards; existing state
 and delivery code own positive receipts and retry. Qualification/state methods
-were compared as ASTs against the dev baseline: only `_check_once`,
-`_process_tibo_posts`, `_tibo_pipeline`, `_enrich_content` changed. In particular
-Reset/Banked eligibility, full-push eligibility, old-lane coverage, receipt and
-ordering methods remain unchanged. Old lanes retain their existing text fallback
+were compared as ASTs against the dev baseline: original qualification, receipt
+and state methods remain unchanged. Stage 1 intentionally updates scheduling,
+enrichment input, initialization of verification capacity, `_tibo_inflight` and
+`_deliver_tibo_group`; review repairs split provisional ordering from coverage
+and add `_promote_tibo_attempt` for final ordering registration. Old lanes retain their existing text fallback
 and stale quote guard.
 
 ## Request budget and observed latency
@@ -69,8 +74,11 @@ partial/unavailable, never EOF. Returned good pages remain usable after failure.
 The discovery window is 72h; delivery eligibility still uses the existing 48h guard.
 
 Unknown relation verification adds at most **2 single-post GETs per candidate**,
-Fx then Vx, within **12 seconds total**. Fx verifies handle/author ID/ID/time.
-Vx does not expose author ID reliably; as the existing secondary single-post
+Fx then Vx, within **12 seconds total**. Fx verifies handle/author ID/Tweet ID and parses authoritative time. A matching
+verified single-post timestamp supersedes the possibly conflicting discovery time.
+Shared verification capacity is **4 active candidates per Watcher**; the same
+12s per-candidate deadline includes waiting for capacity, so a queue cannot turn
+bounded verification into permanent barrier ownership. Vx does not expose author ID reliably; as the existing secondary single-post
 provider it requires matching handle, canonical HTTPS Tweet URL, Tweet ID/time
 and explicit reply/repost fields. It is not promoted to timeline discovery.
 Subsequent full-body enrichment reuses the old budget (up to two 10s provider
@@ -109,9 +117,10 @@ for an existing group. If no source yields candidates, the poll produces no
 Tibo state transition. Next poll retries head discovery and unknown relations.
 
 **Partial/unavailable never establishes or rebuilds a Tibo baseline.** New groups
-wait for a complete primary batch with eligible/potentially eligible candidates;
-verified candidates establish the baseline, unresolved candidates are not marked
-seen. Existing baseline flags are retained regardless of provider status. Neither
+wait for complete combined coverage and reliably classified candidates. A genuinely
+complete empty snapshot (including only reliable excluded posts) establishes an
+empty baseline; its first future eligible post is delivered. Unknown relations
+do not establish a new baseline or write seen. Existing baseline flags are retained regardless of provider status. Neither
 provider switching nor partial recovery clears seen/delivered/receipt history.
 No provider-specific dedup identity or state migration exists. A Tweet discovered
 by several providers remains one candidate and one `tweet:<id>` coverage identity.
@@ -183,9 +192,9 @@ managed executable plus the previously extracted local runtime libraries via
 The initial missing-library failure was environmental and was resolved before
 acceptance; no browser tests were skipped to hide it.
 
-- Full pytest: **468 passed, 1 skipped** (SDK 2.8.1-only negative control).
-- Discovery targeted: **36 passed**; ordering targeted: **29 passed**;
-  discovery + ordering + Tibo/render targeted: **151 passed**.
+- Full pytest: **493 passed, 1 skipped** (SDK 2.8.1-only negative control).
+- Discovery targeted: **61 passed**; ordering targeted: **29 passed**;
+  discovery + ordering + Tibo/render targeted: **176 passed**.
 - Real Chromium: **6 passed**, including quote, note/long, poll and active poll.
 - Actual SDK LLM contract matrix, official Host 1.2.4/1.2.5/1.3.5:
   SDK 2.8.0/2.8.2/2.10.0 each **6 passed, 1 skipped**;
@@ -200,3 +209,34 @@ not the later Reset/Banked adapter refactor. Stage 2 remains a separate review
 scope; Stage 3 remains future work. No deployment or historical resend is part of
 this acceptance. The four fresh golden posts have individual 48h deadlines in
 DECOUPLING_PLAN.md; completing dev does not claim production recovery.
+
+## Implementation review round 1 and repairs
+
+Chat `codex额度重置监控插件`, response ID
+`32158ba5-60e2-42a3-8670-5b314f98382c`, reviewed immutable
+`4b972a069829d09d5158672f4848653b66bdcdf4`: REQUEST CHANGES, three P1 and two P2.
+The reported scenarios were independently reproduced through committed tests:
+19/20 review scenarios failed before repairs (relation-only repair already worked).
+The review recommends completing Stage 1 fixes and no Stage 2 now.
+
+| Finding | Final repair and regression |
+|---|---|
+| P1 provisional cross-lane deferral | `coverage_eligible=false` while verification is pending. Ordering participates, but `_tibo_inflight` tells existing old lanes false. Ten real Banked/L4 dispatcher cases cover pending then eligible/excluded/unresolved/failure/cancel. Old-lane success writes canonical coverage, later eligible Tibo does not resend. |
+| P1 combined completeness / empty baseline | External novel IDs and time/relation discrepancies give partial. Only complementary ordinary/replies use complementary union. Complete empty/fully excluded snapshots establish baseline, then first future post sends. Codex history older than 72h is outside primary scope, not a current gap (23 such IDs in the captured feed). |
+| P1 authoritative time repair | Single-post verified identity/author/time repairs both relation and time conflict. Every provisional promotion atomically registers a new final-time attempt before releasing old events. All provisional times conservatively hold Tibo ordering until resolution, so even an earlier corrected time cannot be overtaken. Two direction tests, three concurrent promotions, authoritative age guard in both directions and promotion cancellation verify final order, wakeups and cleanup. |
+| P2 verification pressure | Shared semaphore limits active metadata verification to four; its queue wait is inside the 12s deadline. Twenty-unknown timeout/cancel cases reach peak four, clean every attempt/event, make no send or seen, and do not hold barriers indefinitely. |
+| P2 URL-only hint | Only verified eligibility can pre-exclude URL-only. Codex/unknown hint must first obtain authoritative single-post metadata/body. URL-only hint repaired into own comment sends; verified Fx URL-only remains pre-registration excluded. |
+
+The conservative provisional ordering hold only affects Tibo delivery; Reset/
+Banked old lanes remain available during verification. Reliable verified Tibo
+attempts retain existing per-group delivery_done deferral semantics. Promotion
+changes only in-memory attempt/events and cannot create state/receipt evidence.
+No state migration, provider dedup identity or Reset/Banked qualification change.
+
+Round 1 repair reruns the full suite, targeted tests, SDK contract matrix,
+Chromium, quality gates and original production-copy dry-run. Frozen-clock
+pending/receipt/age results remain unchanged; real send calls remain zero.
+Logs and immutable review requests/replies stay in the external evidence folder
+with `review-` prefixes. Final SHA and verify_release manifest are provided to
+the same chat for the next review; the initial REQUEST CHANGES is not approval
+of the repaired commit. Stage 2/3 and production remain out of this phase.

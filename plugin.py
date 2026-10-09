@@ -290,6 +290,7 @@ PUSH_BANKED_KEY_PREFIX = "push-banked:"
 # 单 provider 10.0s：quality-first（慢 provider 优于截断摘要）；
 # 双 provider 最坏 ≈20s，仍远小于告警稀有度允许的延迟。
 PROVIDER_TIMEOUT_SECONDS = 10.0
+TIBO_VERIFICATION_CONCURRENCY = 4
 FXTWITTER_STATUS_URL = "https://api.fxtwitter.com/status/{tweet_id}"
 # 本插件只关注 thsottiaux；VxTwitter 单条 endpoint 路径含用户名。
 VXTWITTER_STATUS_URL = "https://api.vxtwitter.com/thsottiaux/status/{tweet_id}"
@@ -1711,6 +1712,7 @@ class CodexResetWatcher(MaiBotPlugin):
         # inflight 值为结构化元数据：{task, kind(l4|l1), tweet_id, groups}
         self._inflight: dict[str, dict[str, Any]] = {}
         self._llm_semaphore = asyncio.Semaphore(1)
+        self._tibo_verification_slots = asyncio.Semaphore(TIBO_VERIFICATION_CONCURRENCY)
 
     async def on_load(self) -> None:
         self._load_state()
@@ -1938,7 +1940,7 @@ class CodexResetWatcher(MaiBotPlugin):
             self._fetch_push_notification(),
             self._fetch_tibo_discovery(),
         )
-        candidates = union_batches(discovery, codex_hints(feed))
+        candidates = union_batches(discovery, codex_hints(feed, now=_utcnow()))
         if self.config.watcher.tibo_full_push:
             logger.info(
                 "Tibo discovery union: status=%s fallback_hints=%s candidates=%s",
@@ -1981,6 +1983,9 @@ class CodexResetWatcher(MaiBotPlugin):
     def _tibo_inflight(self, tweet_id: str, group_id: str) -> bool:
         item = self._inflight.get(f"tibo:{tweet_id}")
         if not item or group_id not in item.get("groups", []):
+            return False
+        # Provisional ordering participants have no cross-lane coverage right.
+        if item.get("coverage_eligible") is False:
             return False
         delivery_done = item.get("delivery_done")
         if isinstance(delivery_done, dict):
@@ -2050,11 +2055,6 @@ class CodexResetWatcher(MaiBotPlugin):
                 and metadata.replying_to != "thsottiaux"
             ):
                 continue
-            if (
-                candidate.text
-                and not re.sub(r"https?://\S+", "", candidate.text).strip()
-            ):
-                continue
             if metadata.status == "verified" and not is_tibo_main_post(
                 candidate.as_post()
             ):
@@ -2066,7 +2066,9 @@ class CodexResetWatcher(MaiBotPlugin):
             for gid in groups:
                 entry = self._group_state(gid)
                 if not entry.get("tibo_baseline_done"):
-                    if batch.status != "ok" or not posts:
+                    if batch.status != "ok" or any(
+                        t.metadata.status != "verified" for t in posts
+                    ):
                         continue
                     entry["tibo_seen_ids"] = sorted(
                         {t.tweet_id for t in posts if t.metadata.status == "verified"}
@@ -2094,16 +2096,17 @@ class CodexResetWatcher(MaiBotPlugin):
             if not pending:
                 continue
             if _utcnow() - moment > timedelta(hours=MAX_SIGNAL_AGE_HOURS):
-                if tweet.metadata.status != "verified":
+                if tweet.metadata.status == "unknown":
                     continue
-                async with self._state_lock:
-                    for gid in pending:
-                        entry = self._group_state(gid)
-                        entry["tibo_seen_ids"] = sorted(
-                            set(entry.get("tibo_seen_ids") or []) | {tweet_id}
-                        )
-                    self._save_state()
-                continue
+                if tweet.metadata.status == "verified":
+                    async with self._state_lock:
+                        for gid in pending:
+                            entry = self._group_state(gid)
+                            entry["tibo_seen_ids"] = sorted(
+                                set(entry.get("tibo_seen_ids") or []) | {tweet_id}
+                            )
+                        self._save_state()
+                    continue
             key = f"tibo:{tweet_id}"
             if key not in self._inflight:
                 attempt = {
@@ -2111,6 +2114,8 @@ class CodexResetWatcher(MaiBotPlugin):
                     "tweet_id": tweet_id,
                     "at": moment,
                     "groups": list(pending),
+                    "coverage_eligible": tweet.metadata.status == "verified",
+                    "ordering_pending": tweet.metadata.status != "verified",
                     "delivery_done": {gid: asyncio.Event() for gid in pending},
                 }
                 self._inflight[key] = attempt
@@ -2131,6 +2136,19 @@ class CodexResetWatcher(MaiBotPlugin):
         if self._inflight.get(key) is attempt:
             self._inflight.pop(key)
 
+    def _promote_tibo_attempt(self, key: str, old: dict, moment: datetime) -> dict:
+        """Atomically register final time, then release provisional waiters."""
+        final = {
+            **old,
+            "at": moment,
+            "coverage_eligible": True,
+            "ordering_pending": False,
+            "delivery_done": {gid: asyncio.Event() for gid in old["groups"]},
+        }
+        self._inflight[key] = final
+        self._finish_tibo_attempt(key, old)
+        return final
+
     async def _deliver_tibo_group(self, gid, tweet_id, attempt, message, card) -> None:
         """Wait outside the delivery lock; release this group after any attempt."""
         try:
@@ -2141,7 +2159,11 @@ class CodexResetWatcher(MaiBotPlugin):
                     for entry in self._inflight.values()
                     if entry.get("kind") == "tibo"
                     and gid in entry["delivery_done"]
-                    and (entry["at"], entry["tweet_id"]) < order
+                    and entry is not attempt
+                    and (
+                        entry.get("ordering_pending")
+                        or (entry["at"], entry["tweet_id"]) < order
+                    )
                     and not entry["delivery_done"][gid].is_set()
                 ]
                 if not earlier:
@@ -2178,11 +2200,26 @@ class CodexResetWatcher(MaiBotPlugin):
         attempt = self._inflight[key]
         try:
             if tweet.metadata.status != "verified":
-                tweet = await verify_candidate(tweet, self._get_json)
+                tweet = await verify_candidate(
+                    tweet, self._get_json, semaphore=self._tibo_verification_slots
+                )
                 if tweet.metadata.status != "verified" or not is_tibo_main_post(
                     tweet.as_post()
                 ):
                     return
+                if _utcnow() - tweet.published_at > timedelta(
+                    hours=MAX_SIGNAL_AGE_HOURS
+                ):
+                    async with self._state_lock:
+                        for gid in groups:
+                            if gid in self._target_groups():
+                                entry = self._group_state(gid)
+                                entry["tibo_seen_ids"] = sorted(
+                                    set(entry.get("tibo_seen_ids") or []) | {tweet_id}
+                                )
+                        self._save_state()
+                    return
+                attempt = self._promote_tibo_attempt(key, attempt, tweet.published_at)
             content = await self._enrich_content(tweet_id, tweet)
             url = f"https://x.com/thsottiaux/status/{tweet_id}"
             translation = await self._llm_translate_content(
