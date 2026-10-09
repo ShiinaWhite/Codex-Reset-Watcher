@@ -319,6 +319,267 @@ def test_reliable_exclusions_before_attempt_registration(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
+    "outcome", ["eligible", "excluded", "unresolved", "failure", "expired"]
+)
+def test_undated_fallback_has_bounded_repair_owner(tmp_path, monkeypatch, outcome):
+    p = ready(tmp_path, monkeypatch, tibo_full_push=True)
+    monkeypatch.setattr(module, "_utcnow", lambda: NOW)
+    hint = discovery.TweetCandidate("123", None, ("codex-reset",))
+    good = candidate()
+    if outcome == "excluded":
+        good = candidate(replying_to={"screen_name": "other", "status": "456"})
+    elif outcome == "expired":
+        good = candidate(created_timestamp=(NOW - timedelta(hours=49)).timestamp())
+    calls = []
+
+    async def get(url, budget):
+        calls.append(url)
+        if outcome == "failure":
+            raise RuntimeError("provider failure")
+        return None if outcome == "unresolved" else single_payload(good)
+
+    p._get_json = get
+
+    async def enrich(*args):
+        return None
+
+    p._enrich_content = enrich
+
+    async def scenario():
+        await p._process_tibo_posts(
+            discovery.DiscoveryBatch((hint,), "partial"), p._target_groups()
+        )
+        assert "tibo:123" in p._inflight
+        attempt = p._inflight["tibo:123"]
+        assert attempt["ordering_pending"] and not attempt["coverage_eligible"]
+        await asyncio.wait_for(_drain_inflight(p), 1)
+        assert all(e.is_set() for e in attempt["delivery_done"].values())
+
+    asyncio.run(scenario())
+    assert 1 <= len(calls) <= 2
+    entry = p._group_state(p._target_groups()[0])
+    assert entry["tibo_baseline_done"]
+    assert entry["tibo_seen_ids"] == (
+        ["123"] if outcome in {"eligible", "expired"} else []
+    )
+    assert len(p.ctx.send.sent_messages) == int(outcome == "eligible")
+
+
+@pytest.mark.parametrize("outcome", ["eligible", "excluded", "unresolved", "failure"])
+@pytest.mark.parametrize("existing_group", [False, True])
+def test_new_group_unknown_has_silent_baseline_repair(
+    tmp_path, monkeypatch, outcome, existing_group
+):
+    gids = ["100000001", "100000002"] if existing_group else ["100000001"]
+    p = ready(tmp_path, monkeypatch, tibo_full_push=True, group_ids=gids)
+    monkeypatch.setattr(module, "_utcnow", lambda: NOW)
+    new = p._group_state(gids[-1])
+    new["tibo_baseline_done"] = False
+    unknown = candidate(replying_to={"status": "456"})
+    resolved = (
+        candidate()
+        if outcome != "excluded"
+        else candidate(replying_to={"screen_name": "other", "status": "456"})
+    )
+    calls = []
+
+    async def get(url, budget):
+        calls.append(url)
+        if outcome == "failure":
+            raise RuntimeError("provider failure")
+        return None if outcome == "unresolved" else single_payload(resolved)
+
+    p._get_json = get
+
+    async def enrich(*args):
+        return None
+
+    p._enrich_content = enrich
+
+    async def scenario():
+        batch = discovery.DiscoveryBatch((unknown,), "ok")
+        await p._process_tibo_posts(batch, gids)
+        await asyncio.wait_for(_drain_inflight(p), 1)
+        assert bool(calls)
+        assert new["tibo_baseline_done"] == (outcome in {"eligible", "excluded"})
+        assert new["tibo_seen_ids"] == (["123"] if outcome == "eligible" else [])
+        assert not new.get("tibo_delivered_ids")
+        assert all(
+            stream != "qq-group-" + gids[-1] for stream, _ in p.ctx.send.sent_messages
+        )
+        if outcome in {"unresolved", "failure"}:
+            before = len(calls)
+            await p._process_tibo_posts(batch, gids)
+            await asyncio.wait_for(_drain_inflight(p), 1)
+            assert len(calls) > before
+            assert not new["tibo_baseline_done"] and not new["tibo_seen_ids"]
+        else:
+            assert len(calls) == 1  # Old/new group share one in-memory repair job.
+            await p._process_tibo_posts(
+                discovery.DiscoveryBatch((candidate(id="124"),), "ok"), gids
+            )
+            await asyncio.wait_for(_drain_inflight(p), 1)
+            assert new["tibo_delivered_ids"] == ["124"]
+
+    asyncio.run(scenario())
+    historical_sends = [
+        (s, b) for s, b in p.ctx.send.sent_messages if "/status/123" in b
+    ]
+    assert len(historical_sends) == int(existing_group and outcome == "eligible")
+
+
+@pytest.mark.parametrize("age_hours", [1, 73])
+def test_undated_cross_check_is_resolved_before_completeness(
+    tmp_path, monkeypatch, age_hours
+):
+    p = ready(tmp_path, monkeypatch, tibo_full_push=True)
+    monkeypatch.setattr(module, "_utcnow", lambda: NOW)
+    entry = p._group_state(p._target_groups()[0])
+    entry["tibo_baseline_done"] = False
+    hint = discovery.codex_hints(
+        {
+            "stale": False,
+            "profile": {"handle": "thsottiaux"},
+            "source_scope": "timeline",
+            "tweets": [{"id": "123", "at": "invalid"}],
+        },
+        now=NOW,
+    )
+    batch = discovery.union_batches(discovery.DiscoveryBatch((), "ok"), hint)
+    good = candidate(created_timestamp=(NOW - timedelta(hours=age_hours)).timestamp())
+    calls = []
+
+    async def get(url, budget):
+        calls.append(url)
+        return single_payload(good)
+
+    p._get_json = get
+
+    async def scenario():
+        await p._process_tibo_posts(batch, p._target_groups())
+        await asyncio.wait_for(_drain_inflight(p), 1)
+
+    asyncio.run(scenario())
+    assert calls
+    assert entry["tibo_baseline_done"] == (age_hours == 73)
+    assert not entry["tibo_seen_ids"] and not p.ctx.send.sent_messages
+
+
+@pytest.mark.parametrize("exit_mode", ["cancel", "timeout"])
+def test_baseline_and_undated_repair_cleanup(tmp_path, monkeypatch, exit_mode):
+    gids = ["100000001", "100000002"]
+    p = ready(tmp_path, monkeypatch, tibo_full_push=True, group_ids=gids)
+    monkeypatch.setattr(module, "_utcnow", lambda: NOW)
+    monkeypatch.setattr(discovery, "VERIFICATION_BUDGET_SECONDS", 0.05)
+    p._group_state(gids[1])["tibo_baseline_done"] = False
+    unknown = discovery.TweetCandidate("123", None, ("fxtwitter",))
+    active = calls = 0
+
+    async def scenario():
+        started = asyncio.Event()
+
+        async def get(url, budget):
+            nonlocal active, calls
+            active += 1
+            calls += 1
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                active -= 1
+
+        p._get_json = get
+        await p._process_tibo_posts(discovery.DiscoveryBatch((unknown,), "ok"), gids)
+        attempt = p._inflight["tibo:123"]
+        await asyncio.wait_for(started.wait(), 1)
+        assert calls == 1 and not p._tibo_inflight("123", gids[0])
+        if exit_mode == "cancel":
+            await p._cancel_inflight()
+        else:
+            await asyncio.wait_for(_drain_inflight(p), 1)
+        assert not p._inflight and not p._tibo_repairs and active == 0
+        assert all(e.is_set() for e in attempt["delivery_done"].values())
+
+    asyncio.run(scenario())
+    assert not p._group_state(gids[1])["tibo_baseline_done"]
+    assert all(not p._group_state(gid)["tibo_seen_ids"] for gid in gids)
+    assert not p.ctx.send.sent_messages
+
+
+def test_undated_repair_orders_by_authoritative_time(tmp_path, monkeypatch):
+    p = ready(tmp_path, monkeypatch, tibo_full_push=True)
+    monkeypatch.setattr(module, "_utcnow", lambda: NOW)
+    undated = discovery.TweetCandidate("123", None, ("codex-reset",))
+    neighbor = candidate(id="124")
+
+    async def scenario():
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def get(url, budget):
+            entered.set()
+            await release.wait()
+            return single_payload(
+                candidate(created_timestamp=(NOW - timedelta(hours=1)).timestamp())
+            )
+
+        async def enrich(*args):
+            return None
+
+        p._get_json, p._enrich_content = get, enrich
+        await p._process_tibo_posts(
+            discovery.DiscoveryBatch((undated, neighbor), "partial"), p._target_groups()
+        )
+        await asyncio.wait_for(entered.wait(), 1)
+        await asyncio.sleep(0.02)
+        assert not p.ctx.send.sent_messages
+        release.set()
+        await asyncio.wait_for(_drain_inflight(p), 1)
+
+    asyncio.run(scenario())
+    assert "/status/123" in p.ctx.send.sent_messages[0][1]
+    assert "/status/124" in p.ctx.send.sent_messages[1][1]
+
+
+def test_silent_baseline_completion_cannot_release_existing_group_delivery(
+    tmp_path, monkeypatch
+):
+    gids = ["100000001", "100000002"]
+    p = ready(tmp_path, monkeypatch, tibo_full_push=True, group_ids=gids)
+    monkeypatch.setattr(module, "_utcnow", lambda: NOW)
+    new = p._group_state(gids[1])
+    new["tibo_baseline_done"] = False
+
+    async def scenario():
+        rendering, release = asyncio.Event(), asyncio.Event()
+
+        async def get(url, budget):
+            return single_payload(candidate())
+
+        async def enrich(*args):
+            rendering.set()
+            await release.wait()
+            return None
+
+        p._get_json, p._enrich_content = get, enrich
+        await p._process_tibo_posts(
+            discovery.DiscoveryBatch((candidate(replying_to={"status": "456"}),), "ok"),
+            gids,
+        )
+        await asyncio.wait_for(rendering.wait(), 1)
+        await asyncio.sleep(0.02)  # Include baseline task's completion callbacks.
+        assert new["tibo_baseline_done"] and new["tibo_seen_ids"] == ["123"]
+        assert not p._inflight["tibo:123"]["delivery_done"][gids[0]].is_set()
+        assert p._tibo_inflight("123", gids[0])
+        assert not p._tibo_inflight("123", gids[1])
+        release.set()
+        await asyncio.wait_for(_drain_inflight(p), 1)
+
+    asyncio.run(scenario())
+    assert len(p.ctx.send.sent_messages) == 1
+    assert not new.get("tibo_delivered_ids")
+
+
+@pytest.mark.parametrize(
     "resolution", ["exclude", "unknown", "timeout", "failure", "eligible"]
 )
 def test_unknown_bounded_verification_releases_ordering_without_seen(

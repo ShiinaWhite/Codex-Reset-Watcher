@@ -24,7 +24,9 @@ Stage 2/3 are not implemented.
   verification status (`verified`, `unknown`, `conflict`). Explicit null relations
   establish non-reply/non-repost only when the required fields are present.
 - `DiscoveryBatch`: candidates, ok/partial/unavailable, issues, GET count,
-  elapsed milliseconds and Codex hint use. Provenance never becomes a receipt key.
+  elapsed milliseconds, Codex hint use and unconfirmed cross-check IDs whose
+  timestamps have not established whether they belong in the 72h window.
+  Provenance never becomes a receipt key.
 - Fx v2 requires `type=status`, author handle `thsottiaux` and pinned author ID
   `1953337039510003712`. Other-author thread context is filtered. Malformed same-
   author rows invalidate completeness; HTTP 200 with bad code/schema is failure.
@@ -33,8 +35,12 @@ Stage 2/3 are not implemented.
   hint adapter always has partial coverage, even when its arrays are nonempty.
 - Tweet ID union removes cross-page/cross-provider duplicates. Verified Fx
   metadata wins over Codex hints. Conflicting verified relations or times require
-  re-verification. Novel cross-check IDs or known time discrepancies downgrade
-  combined coverage to partial. Ordinary + replies are explicitly complementary
+  re-verification. Dated novel cross-check IDs or known time discrepancies downgrade
+  combined coverage to partial. Undated novel IDs require bounded single-post
+  verification before baseline: recent authoritative time confirms a gap and
+  prevents baseline; an authoritative time older than 72h removes an unrelated
+  historical hint from the cross-check. Unresolved hints never establish baseline.
+  Ordinary + replies are explicitly complementary
   surfaces; their union is complete only if both surfaces complete without conflict. Candidates are sorted by parsed instants, not raw strings or
   provider order. Parent timestamps do not terminate a page early.
 
@@ -58,7 +64,9 @@ were compared as ASTs against the dev baseline: original qualification, receipt
 and state methods remain unchanged. Stage 1 intentionally updates scheduling,
 enrichment input, initialization of verification capacity, `_tibo_inflight` and
 `_deliver_tibo_group`; review repairs split provisional ordering from coverage
-and add `_promote_tibo_attempt` for final ordering registration. Old lanes retain their existing text fallback
+and add `_promote_tibo_attempt` for final ordering registration. Round 2 adds
+baseline-only verification, shared in-memory repair tasks and their cancellation
+cleanup; qualification/receipt/state methods are unchanged. Old lanes retain their existing text fallback
 and stale quote guard.
 
 ## Request budget and observed latency
@@ -78,7 +86,11 @@ Fx then Vx, within **12 seconds total**. Fx verifies handle/author ID/Tweet ID a
 verified single-post timestamp supersedes the possibly conflicting discovery time.
 Shared verification capacity is **4 active candidates per Watcher**; the same
 12s per-candidate deadline includes waiting for capacity, so a queue cannot turn
-bounded verification into permanent barrier ownership. Vx does not expose author ID reliably; as the existing secondary single-post
+bounded verification into permanent barrier ownership. Old-group delivery and
+new-group baseline classification share the same running Tweet-ID repair job:
+at most two metadata GETs per unique unresolved candidate, not per group. Jobs
+are removed on completion; no durable metadata cache or state field is added.
+Vx does not expose author ID reliably; as the existing secondary single-post
 provider it requires matching handle, canonical HTTPS Tweet URL, Tweet ID/time
 and explicit reply/repost fields. It is not promoted to timeline discovery.
 Subsequent full-body enrichment reuses the old budget (up to two 10s provider
@@ -119,8 +131,14 @@ Tibo state transition. Next poll retries head discovery and unknown relations.
 **Partial/unavailable never establishes or rebuilds a Tibo baseline.** New groups
 wait for complete combined coverage and reliably classified candidates. A genuinely
 complete empty snapshot (including only reliable excluded posts) establishes an
-empty baseline; its first future eligible post is delivered. Unknown relations
-do not establish a new baseline or write seen. Existing baseline flags are retained regardless of provider status. Neither
+empty baseline; its first future eligible post is delivered. A complete snapshot
+with unknown relations starts bounded baseline-only classification. Reliable
+eligible results become silent baseline-seen; reliable exclusions allow an empty
+baseline. Unresolved/failure/timeout/cancel leaves baseline pending and writes no
+seen; the next poll actually retries verification. Baseline preparation has no
+delivery or ordering/coverage rights. Undated candidates for existing groups get
+provisional verification, then authoritative time, the unchanged 48h guard and
+final ordering promotion. Existing baseline flags are retained regardless of provider status. Neither
 provider switching nor partial recovery clears seen/delivered/receipt history.
 No provider-specific dedup identity or state migration exists. A Tweet discovered
 by several providers remains one candidate and one `tweet:<id>` coverage identity.
@@ -192,9 +210,9 @@ managed executable plus the previously extracted local runtime libraries via
 The initial missing-library failure was environmental and was resolved before
 acceptance; no browser tests were skipped to hide it.
 
-- Full pytest: **493 passed, 1 skipped** (SDK 2.8.1-only negative control).
-- Discovery targeted: **61 passed**; ordering targeted: **29 passed**;
-  discovery + ordering + Tibo/render targeted: **176 passed**.
+- Full pytest: **512 passed, 1 skipped** (SDK 2.8.1-only negative control).
+- Discovery targeted: **80 passed**; ordering targeted: **29 passed**;
+  discovery + ordering + Tibo/render targeted: **195 passed**.
 - Real Chromium: **6 passed**, including quote, note/long, poll and active poll.
 - Actual SDK LLM contract matrix, official Host 1.2.4/1.2.5/1.3.5:
   SDK 2.8.0/2.8.2/2.10.0 each **6 passed, 1 skipped**;
@@ -240,3 +258,46 @@ Logs and immutable review requests/replies stay in the external evidence folder
 with `review-` prefixes. Final SHA and verify_release manifest are provided to
 the same chat for the next review; the initial REQUEST CHANGES is not approval
 of the repaired commit. Stage 2/3 and production remain out of this phase.
+
+## Implementation review round 2 and repairs
+
+Chat response `1fd21893-7cc4-4794-8521-a7e86dbd686f` reviewed immutable
+`b90d4eefa986d14c7b300ccc8c4bdd3584d005a9`: REQUEST CHANGES, two new P1.
+It explicitly confirmed the five prior findings were substantively repaired and
+again recommended no Stage 2 now. Independent reproductions failed 13 of the
+15 added scenarios before these repairs (the old-group-only paths in two mixed
+group scenarios already behaved correctly). Four further lifecycle/order tests
+were added during repair; all 19 new regressions now pass.
+
+1. **Undated fallback candidate owner.** Missing/malformed Codex time no longer
+   drops an unknown candidate from scheduling. It owns a provisional ordering
+   participant with no cross-lane coverage while shared 4-slot/12s verification
+   obtains author/ID/relation and authoritative time. Existing promotion and 48h
+   guard then apply. Eligible, excluded, unresolved, failed and expired cases,
+   authoritative chronological order, cancellation and timeout verify no false
+   seen/receipt or stranded events. A malformed historical hint cannot falsely
+   prove a gap in a complete primary's recent window: the batch carries its
+   unconfirmed ID until bounded repair dates it. A genuine recent extra ID still
+   prevents baseline, and transport-partial/unavailable still never baselines.
+2. **New-group baseline classification owner.** An otherwise complete snapshot
+   gets a dedicated silent preparation task for unresolved candidates. It shares
+   running repair jobs with old-group delivery, but never calls send/enrichment/
+   presentation or participates in old-lane coverage. After all classifications
+   are reliable, it writes eligible history as baseline-seen and completes the
+   flag; reliable excluded-only history completes an empty baseline. Failure or
+   unresolved result leaves the flag false and seen empty, and another poll
+   performs real verification again. Eight new/mixed-group eligible/excluded/
+   unresolved/failure cases verify onboarding silence and first future delivery.
+   A held existing-group delivery remains held when baseline completion callbacks
+   run; global cancellation also reaps shared metadata tasks.
+
+No provider dedup identity or persisted schema migration was added. AST scope
+comparison with b90 confirms only initialization, inflight cancellation, Tibo
+candidate scheduling and its pipeline changed, plus the two new helper methods.
+Original qualification, receipt/state and old-lane dispatch methods are identical.
+The complete validation matrix and real-production-state-copy simulation were
+rerun; golden outcomes and zero real-send result remain unchanged. Round 2
+repair evidence uses `round2-*` prefixes in the external acceptance directory.
+The new immutable commit/diff and evidence will be sent to the same chat for
+round 3 implementation review; REQUEST CHANGES is not an approval or permission
+for production, main, Stage 2/3, historical resend or release actions.

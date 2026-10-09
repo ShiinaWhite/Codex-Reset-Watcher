@@ -71,6 +71,9 @@ class DiscoveryBatch:
     request_count: int = 0
     elapsed_ms: int = 0
     fallback_used: bool = False
+    # Novel hints without a date cannot yet establish a gap in the 72h window.
+    # They must be resolved before this snapshot can establish a baseline.
+    unconfirmed_ids: tuple[str, ...] = ()
 
 
 def fx_candidate(
@@ -195,11 +198,16 @@ def union_batches(
     primary = batches[0] if batches else DiscoveryBatch()
     primary_ids = {c.tweet_id for c in primary.candidates}
     discrepancies = []
+    unconfirmed = set(primary.unconfirmed_ids)
     merged: dict[str, TweetCandidate] = {}
     for index, batch in enumerate(batches):
         for new in batch.candidates:
             if index and not complementary and new.tweet_id not in primary_ids:
-                discrepancies.append("cross-check adds " + new.tweet_id)
+                if new.published_at is None:
+                    unconfirmed.add(new.tweet_id)
+                else:
+                    discrepancies.append("cross-check adds " + new.tweet_id)
+                    unconfirmed.discard(new.tweet_id)
             old = merged.get(new.tweet_id)
             if old is None:
                 merged[new.tweet_id] = new
@@ -255,6 +263,7 @@ def union_batches(
         fallback_used=any("codex-reset" in c.discovery_sources for c in rows),
         issues=tuple(issue for b in batches for issue in b.issues)
         + tuple(sorted(set(discrepancies))),
+        unconfirmed_ids=tuple(sorted(unconfirmed)),
     )
 
 

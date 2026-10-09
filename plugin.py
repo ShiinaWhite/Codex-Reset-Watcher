@@ -249,6 +249,7 @@ if __package__:
     from .tibo_discovery import (
         DiscoveryBatch,
         FxTiboDiscovery,
+        LOOKBACK_HOURS,
         TweetCandidate,
         codex_hints,
         union_batches,
@@ -259,6 +260,7 @@ else:
     from tibo_discovery import (
         DiscoveryBatch,
         FxTiboDiscovery,
+        LOOKBACK_HOURS,
         TweetCandidate,
         codex_hints,
         union_batches,
@@ -1713,6 +1715,7 @@ class CodexResetWatcher(MaiBotPlugin):
         self._inflight: dict[str, dict[str, Any]] = {}
         self._llm_semaphore = asyncio.Semaphore(1)
         self._tibo_verification_slots = asyncio.Semaphore(TIBO_VERIFICATION_CONCURRENCY)
+        self._tibo_repairs: dict[str, asyncio.Task] = {}
 
     async def on_load(self) -> None:
         self._load_state()
@@ -1761,15 +1764,20 @@ class CodexResetWatcher(MaiBotPlugin):
           新任务，其引用由管线自身 finally 精确 pop，本方法不触碰
           （无条件 clear 会抹掉新任务的注册，形成 orphan）。
         """
-        tasks = [entry["task"] for entry in self._inflight.values()]
+        tasks = [entry["task"] for entry in self._inflight.values()] + list(
+            self._tibo_repairs.values()
+        )
         if not tasks:
             return
-        for entry in self._inflight.values():
-            entry["task"].cancel()
+        for task in tasks:
+            task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         for key in list(self._inflight.keys()):
             if self._inflight[key]["task"] in tasks:
                 del self._inflight[key]
+        for key in list(self._tibo_repairs):
+            if self._tibo_repairs[key] in tasks:
+                del self._tibo_repairs[key]
 
     async def on_config_update(
         self, scope: str, config_data: dict, version: str
@@ -2061,14 +2069,19 @@ class CodexResetWatcher(MaiBotPlugin):
                 continue
             posts.append(candidate)
         active = []
+        baseline_groups = []
         async with self._state_lock:
             changed = False
             for gid in groups:
                 entry = self._group_state(gid)
                 if not entry.get("tibo_baseline_done"):
-                    if batch.status != "ok" or any(
-                        t.metadata.status != "verified" for t in posts
+                    if batch.status != "ok":
+                        continue
+                    if batch.unconfirmed_ids or any(
+                        t.metadata.status != "verified" or t.published_at is None
+                        for t in posts
                     ):
+                        baseline_groups.append(gid)
                         continue
                     entry["tibo_seen_ids"] = sorted(
                         {t.tweet_id for t in posts if t.metadata.status == "verified"}
@@ -2079,12 +2092,34 @@ class CodexResetWatcher(MaiBotPlugin):
                     active.append(gid)
             if changed:
                 self._save_state()
+        if baseline_groups and "tibo-baseline" not in self._inflight:
+            attempt = {"kind": "tibo-baseline", "delivery_done": {}}
+            self._inflight["tibo-baseline"] = attempt
+            task = asyncio.create_task(
+                self._tibo_baseline(batch, posts, baseline_groups, attempt),
+                name="tibo-baseline",
+            )
+            attempt["task"] = task
+            task.add_done_callback(
+                lambda _, attempt=attempt: self._finish_tibo_attempt(
+                    "tibo-baseline", attempt
+                )
+            )
         # Compare actual instants; different UTC offsets need not sort as strings.
-        # Unknown times wait for metadata repair, as before.
+        # Undated hints participate provisionally until bounded repair supplies
+        # an authoritative date. Corrupt verified records cannot be delivered.
         timed_posts = [(t.published_at, t) for t in posts]
-        timed_posts = [(at, t) for at, t in timed_posts if at is not None]
+        timed_posts = [
+            (at, t)
+            for at, t in timed_posts
+            if at is not None or t.metadata.status != "verified"
+        ]
         for moment, tweet in sorted(
-            timed_posts, key=lambda item: (item[0], item[1].tweet_id)
+            timed_posts,
+            key=lambda item: (
+                item[0] or datetime.max.replace(tzinfo=timezone.utc),
+                item[1].tweet_id,
+            ),
         ):
             tweet_id = tweet.tweet_id
             pending = [
@@ -2095,7 +2130,9 @@ class CodexResetWatcher(MaiBotPlugin):
             ]
             if not pending:
                 continue
-            if _utcnow() - moment > timedelta(hours=MAX_SIGNAL_AGE_HOURS):
+            if moment is not None and _utcnow() - moment > timedelta(
+                hours=MAX_SIGNAL_AGE_HOURS
+            ):
                 if tweet.metadata.status == "unknown":
                     continue
                 if tweet.metadata.status == "verified":
@@ -2129,6 +2166,81 @@ class CodexResetWatcher(MaiBotPlugin):
                         key, attempt
                     )
                 )
+
+    async def _repair_tibo_candidate(self, tweet: TweetCandidate) -> TweetCandidate:
+        """Share a bounded verification job across delivery and silent baseline."""
+        task = self._tibo_repairs.get(tweet.tweet_id)
+        if task is None:
+            task = asyncio.create_task(
+                verify_candidate(
+                    tweet, self._get_json, semaphore=self._tibo_verification_slots
+                ),
+                name=f"tibo-repair:{tweet.tweet_id}",
+            )
+            self._tibo_repairs[tweet.tweet_id] = task
+
+            def finished(done):
+                if self._tibo_repairs.get(tweet.tweet_id) is done:
+                    self._tibo_repairs.pop(tweet.tweet_id)
+                # The last owner may have been canceled; consume any exception.
+                if not done.cancelled():
+                    done.exception()
+
+            task.add_done_callback(finished)
+        return await asyncio.shield(task)
+
+    async def _tibo_baseline(self, batch, posts, groups, attempt) -> None:
+        """Classify a complete snapshot without sending pre-join history."""
+        try:
+            repaired = await asyncio.gather(
+                *(
+                    self._repair_tibo_candidate(t)
+                    for t in posts
+                    if t.metadata.status != "verified" or t.published_at is None
+                ),
+                return_exceptions=True,
+            )
+            if any(
+                isinstance(t, BaseException)
+                or t.metadata.status != "verified"
+                or t.published_at is None
+                for t in repaired
+            ):
+                return
+            by_id = {t.tweet_id: t for t in posts}
+            by_id.update((t.tweet_id, t) for t in repaired)
+            for tid in batch.unconfirmed_ids:
+                t = by_id.get(tid)
+                if t is None or t.published_at >= _utcnow() - timedelta(
+                    hours=LOOKBACK_HOURS
+                ):
+                    # A recent extra ID is an actual coverage gap. Single-post
+                    # enrichment cannot turn a partial timeline into a baseline.
+                    return
+                by_id.pop(tid)
+            eligible = {
+                t.tweet_id for t in by_id.values() if is_tibo_main_post(t.as_post())
+            }
+            async with self._state_lock:
+                changed = False
+                for gid in groups:
+                    if (
+                        gid not in self._target_groups()
+                        or not self.config.watcher.tibo_full_push
+                    ):
+                        continue
+                    entry = self._group_state(gid)
+                    if entry.get("tibo_baseline_done"):
+                        continue
+                    entry["tibo_seen_ids"] = sorted(
+                        set(entry.get("tibo_seen_ids") or []) | eligible
+                    )
+                    entry["tibo_baseline_done"] = True
+                    changed = True
+                if changed:
+                    self._save_state()
+        finally:
+            self._finish_tibo_attempt("tibo-baseline", attempt)
 
     def _finish_tibo_attempt(self, key: str, attempt: dict) -> None:
         for done in attempt["delivery_done"].values():
@@ -2200,9 +2312,7 @@ class CodexResetWatcher(MaiBotPlugin):
         attempt = self._inflight[key]
         try:
             if tweet.metadata.status != "verified":
-                tweet = await verify_candidate(
-                    tweet, self._get_json, semaphore=self._tibo_verification_slots
-                )
+                tweet = await self._repair_tibo_candidate(tweet)
                 if tweet.metadata.status != "verified" or not is_tibo_main_post(
                     tweet.as_post()
                 ):
