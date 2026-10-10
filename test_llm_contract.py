@@ -7,6 +7,8 @@ config, logging and the final external model invocation are isolated. Upstream
 Core source and SDK packages are not distributed with the Watcher release tree.
 """
 
+from __future__ import annotations
+
 import asyncio
 import ast
 from dataclasses import dataclass
@@ -200,7 +202,7 @@ def test_real_sdk_repair_uses_remaining_rpc_budget(tmp_path, monkeypatch):
     assert 119000 <= wire[0] - wire[1] <= 121000
 
 
-@pytest.mark.parametrize("host", ["1.2.4", "1.2.5", "1.3.5"])
+@pytest.mark.parametrize("host", ["1.2.2", "1.2.4", "1.2.5", "1.3.5"])
 def test_real_sdk_host_replyer_task_and_rpc_budget(tmp_path, monkeypatch, host):
     expected_sdk = os.environ.get("CRW_EXPECT_SDK")
     if expected_sdk:

@@ -9,16 +9,18 @@
 package 属于 MaiBot Host 的运行依赖；插件不安装 Python 包、浏览器或系统库。
 页面只使用本地打包资产，以 data URL 传给 Host，`allow_network=false`。
 
-受支持组合为 MaiBot Host **1.2.4–1.3.5**、SDK **2.8.0–2.10.0**。
+受支持组合为 MaiBot Host **1.2.2–1.3.5**、SDK **2.8.0–2.10.0**。
 `render.html2png` 的首个稳定 Host 是 1.0.0，SDK 代理从 2.3.0 提供；本插件
 使用的 `send.image(return_details=True)` 需要 SDK 2.8.0、Host 1.2.0。
-1.2.4 是官方 lockfile 首次供应 SDK 2.8.0 的稳定 Host。
+官方 1.2.1 已在 lockfile 中供应 SDK 2.8.0；本插件当前经过验证的 Host 下限是 1.2.2，
+不据此宣称支持未经本次验证的 1.2.1。
 这些下限不能仅用“渲染 API 已存在”替代。具体正式 tag/commit 证据见
-[PRE_MAIN_AUDIT.md](../PRE_MAIN_AUDIT.md)。
+[PRE_MAIN_AUDIT.md](../PRE_MAIN_AUDIT.md) 与
+[Host 1.2.2 兼容验证](../HOST122_COMPATIBILITY.md)。
 
 翻译使用 `ctx.call_capability("llm.generate", model=llm.model_task, ...)`，不发送
 `task_name`，由 Host 兼容路由识别模型任务，避开 convenience wrapper 的默认注入。
-Host 1.2.4 + SDK 2.8.0、Host 1.2.5 + SDK 2.8.1/2.8.2、Host 1.3.5 + SDK 2.10.0
+Host 1.2.2/1.2.4 + SDK 2.8.0、Host 1.2.5 + SDK 2.8.1/2.8.2、Host 1.3.5 + SDK 2.10.0
 已通过真实 SDK 包和正式 Host 路由源码矩阵回归；SDK 2.8.1 无需排除。
 RPC 超时通过 `call_capability(timeout_ms=...)` 使用剩余总预算，不发送到 LLM 参数中。
 不宣称范围内每一种 Host/SDK 组合都经过完整运行测试，也不预先承诺未来版本。

@@ -26,7 +26,7 @@ def run(args):
     root.mkdir(parents=True, exist_ok=False)
     plugin_dir = root / "plugins" / "Watcher 安装 # offline"
     plugin_dir.mkdir(parents=True)
-    for name in ("plugin.py", "notice_card.py", "_manifest.json"):
+    for name in ("plugin.py", "notice_card.py", "tibo_discovery.py", "_manifest.json"):
         shutil.copyfile(args.plugin_root / name, plugin_dir / name)
     shutil.copytree(args.plugin_root / "templates", plugin_dir / "templates")
     # This fresh tool process isolates configuration and logging boundaries;

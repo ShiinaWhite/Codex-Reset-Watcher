@@ -5,6 +5,11 @@
 其自身字节不包含在该快照的 clone 数字内。最终 review SHA 及最终克隆的 verifier
 结果另随交付报告给出。不存在 release-only 源码、过滤安装器或新 tag。
 
+2026-10-10 兼容性更正：A1 的 SDK lockfile 依据已重新核对，Host 下限修正为 1.2.2。
+下文 10-09 的安装树、渲染及生产只读取证是历史快照；10-10 曾部署候选但被旧 manifest
+拒绝并已回滚，后续实际生产 Host 隔离验证见 [HOST122_COMPATIBILITY.md](HOST122_COMPATIBILITY.md)。
+此更正不将生产 soak 标记为通过。
+
 ## 结论与范围
 
 候选完成 Host contract 收口、保留全字形的字体按需传输、安装树清理及 0.2.0 文档。
@@ -32,15 +37,18 @@ fallback 和 file-font 实验也通过。服务器独立 Docker 的无缓存下�
 | `render_timeout_ms` 参数 | 稳定 1.0.0 提供相应能力 | 2.5.3 | SDK 变更与 Host render 实现 |
 | `send.image` 基础代理 | 新 IPC Host 的早期发行已有 | 2.0.0 | SDK v2.0.0 源码；不能据此推导本插件下限 |
 | 本插件 `send.image(return_details=True)` | 首个稳定 1.2.0 | 2.8.0 | Host/SDK 分别引入返回详细结果 |
-| 官方 Host 与 SDK 成套安装下限 | **1.2.4** | lockfile **2.8.0** | 1.2.0/1.2.3 尚锁旧 SDK；1.2.4 首次锁 2.8.0 |
+| 官方 Host 首次锁定 SDK 2.8.0 | **1.2.1** | lockfile **2.8.0** | 1.2.0 锁 2.7.1；1.2.1、1.2.2、1.2.3、1.2.4 均锁 2.8.0 |
+| 本插件经过验证的 Host 下限 | **1.2.2** | **2.8.0** | 正式 tag 源码回归 + 实际生产 Host/SDK 隔离合同，不推导 1.2.1 可用 |
 | 当前核实正式上限 | **1.3.5** | **2.10.0** | 正式 GitHub Release 与 API 源码、端点合同 smoke |
 
-manifest 调整为 **Host 1.2.4–1.3.5 / SDK 2.8.0–2.10.0**，替换不准确的
+manifest 在 10-10 兼容修复中调整为 **Host 1.2.2–1.3.5 / SDK 2.8.0–2.10.0**，替换不准确的
 Host 1.0.0–1.2.99 与没有验证依据的 SDK 2.99.99 上限。
 这不是依据 main 中显示的版本号推断。1.3.5 Release 于 2026-10-07T06:21:48Z 发布，
 为 stable，tag 对应 `ef223606208cb24bce68751692c94e8e591e92e9`。
 1.2.4 tag 对应 `21cd74d81d47b6f77ba5ab7116a88916e957d15b`。
-这两者的 `src/services/html_render_service.py` 与
+1.2.1 为 `8b937f2d284c86a4e9148d4e77026c05180ce564`，
+1.2.2 为 `b9c00e648c7e493bbb071d5f0349411bee6bc98e`。
+1.2.4 与 1.3.5 的 `src/services/html_render_service.py` 与
 `src/plugin_runtime/capabilities/render.py` **原始 Git blob 字节相同**。
 manifest validator 虽有显示/验证增强，版本范围的比较合同继续保留。
 validator 对同 minor 的未来 patch 可能仅警告；这不等于我们承诺未来版本已验证。
@@ -54,6 +62,7 @@ deadline；并发等待也消耗该预算。无需排除 SDK 2.8.1。
 
 | Host | SDK | 原生 Host 请求 `task_name` | 原生 Host 请求 `model_name` |
 | --- | --- | --- | --- |
+| 1.2.2（10-10 补验） | 2.8.0 | `replyer` | `None` |
 | 1.2.4 | 2.8.0 | `replyer` | `None` |
 | 1.2.5 | 2.8.1 | `replyer` | `None` |
 | 1.2.5 | 2.8.2 | `replyer` | `None` |
@@ -75,7 +84,7 @@ CRW_EXPECT_SDK=2.8.1 \
 python -m pytest -v test_llm_contract.py
 ```
 
-该 clone 需包含 1.2.4、1.2.5、1.3.5 的正式提交，Python 环境安装对应实际 SDK。
+该 clone 需包含 1.2.2、1.2.4、1.2.5、1.3.5 的正式提交，Python 环境安装对应实际 SDK。
 来源及 SHA256 记录于 `tests/fixtures/llm-host-origins.json`，测试读取并校验 Git blobs；
 上游 Core 源码、SDK wheels 和原始日志仅保存在仓库外的验收目录，未混入发布树。
 
@@ -85,6 +94,7 @@ python -m pytest -v test_llm_contract.py
 - [1.0.0-pre.1](https://github.com/Mai-with-u/MaiBot/releases/tag/1.0.0-pre.1)、[首个稳定 1.0.0](https://github.com/Mai-with-u/MaiBot/releases/tag/1.0.0)
 - [Host send details 引入 7a2bdc26](https://github.com/Mai-with-u/MaiBot/commit/7a2bdc26a34984d67c48df6f39f0bd290eae1ed3)
 - [SDK send details 引入 4d8e577d](https://github.com/Mai-with-u/maibot-plugin-sdk/commit/4d8e577d409fc7886e4a9f19dd94bea829081e4f)
+- [Host 1.2.1 lockfile](https://github.com/Mai-with-u/MaiBot/blob/8b937f2d284c86a4e9148d4e77026c05180ce564/uv.lock)、[Host 1.2.2 lockfile](https://github.com/Mai-with-u/MaiBot/blob/b9c00e648c7e493bbb071d5f0349411bee6bc98e/uv.lock)
 - [Host 1.2.4 lockfile](https://github.com/Mai-with-u/MaiBot/blob/1.2.4/uv.lock)、[正式 1.3.5](https://github.com/Mai-with-u/MaiBot/releases/tag/1.3.5)、[1.3.5 lockfile](https://github.com/Mai-with-u/MaiBot/blob/1.3.5/uv.lock)
 - [SDK 2.8.2 changelog](https://github.com/Mai-with-u/maibot-plugin-sdk/blob/v2.8.2/CHANGELOG.md)
 - [1.2.4 manifest validator](https://github.com/Mai-with-u/MaiBot/blob/1.2.4/src/plugin_runtime/runner/manifest_validator.py)、[1.3.5 validator](https://github.com/Mai-with-u/MaiBot/blob/1.3.5/src/plugin_runtime/runner/manifest_validator.py)

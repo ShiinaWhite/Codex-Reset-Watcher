@@ -1,4 +1,35 @@
 {
+  "1.2.2": {
+    "commit": "b9c00e648c7e493bbb071d5f0349411bee6bc98e",
+    "sources": {
+      "core-1.2.2.py.source": {
+        "path": "src/plugin_runtime/capabilities/core.py",
+        "sha256": "1de213e7411f209efbf4e29c5ea4a9b8292f005467fa42c1580fe4977a1eb635",
+        "git_blob": "dc4f41685e6de52c8cb5cbe48a4a9475f6acc26b"
+      },
+      "tasks-1.2.2.py.source": {
+        "path": "src/services/service_task_resolver.py",
+        "sha256": "e6a92d1ef479fcbe261a02e1a895ebd5a609f451c87e7daf621c22144d485979",
+        "git_blob": "e01cddc2ea0faabecd7266125482e723b40d6a28"
+      },
+      "request-1.2.2.py.source": {
+        "path": "src/common/data_models/llm_service_data_models.py",
+        "source_sha256": "7b36f0781d54e04145992c3e1eb03d5c697bc302729b89f950b420b82b9946e2",
+        "sha256": "1238ccafaf977e5c488aca3744d433509996bf905d6fbf6f235638f9752da373",
+        "extraction": "LLMServiceRequest class, including dataclass decorator; original lines preserved"
+      },
+      "manifest-1.2.2.py.source": {
+        "path": "src/plugin_runtime/runner/manifest_validator.py",
+        "sha256": "74ab7a7a4110658cec6f43ee73f7c2cddea213e6484a39b394c7eea24df0f902",
+        "git_blob": "842668c8fd1f5bb8c442ee8f9a6b51cf7891de26"
+      },
+      "loader-1.2.2.py.source": {
+        "path": "src/plugin_runtime/runner/plugin_loader.py",
+        "sha256": "9ed182340448c8e9e33559b7e8ef635f992e15eb90c369c8355525262a3bdda1",
+        "git_blob": "541dd25c5aeb9acd8ed1e60b1294ac77cd992877"
+      }
+    }
+  },
   "1.2.4": {
     "commit": "21cd74d81d47b6f77ba5ab7116a88916e957d15b",
     "sources": {
