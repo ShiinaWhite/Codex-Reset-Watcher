@@ -1329,6 +1329,7 @@ def build_full_notice(
     body_text: str | None = None,
     completeness: str | None = None,
     translation: str | None = None,
+    poll: dict | None = None,
 ) -> str:
     """统一完整通知（v0.1.10，纯函数）。
 
@@ -1340,6 +1341,8 @@ def build_full_notice(
     if translation:
         lines.extend(["", "中文翻译：", translation])
     lines.extend(_body_block(body_text, completeness))
+    if poll is not None:
+        lines.extend(["", _poll_text(poll)])
     if isinstance(url, str) and url.strip():
         lines.extend(["", f"原帖：{url.strip()}"])
     return "\n".join(lines)
@@ -1431,11 +1434,12 @@ class TweetContent:
     绝不进入 QQ 文案（用户侧只感知「原文 / 原文摘录」措辞）。
     """
 
-    __slots__ = ("completeness", "source", "text", "quote")
+    __slots__ = ("completeness", "source", "text", "quote", "poll")
 
     def __init__(self, text: str, source: str, completeness: str) -> None:
         self.text = text
         self.quote: dict[str, Any] | None = None
+        self.poll: dict[str, Any] | None = None
         self.source = source  # fxtwitter | vxtwitter | feed | forecast
         self.completeness = completeness  # full | unknown
 
@@ -1552,6 +1556,63 @@ def _quote_from_tweet(tweet: Any) -> dict | None:
     return None
 
 
+def _poll_from_tweet(tweet: Any) -> dict | None:
+    if not isinstance(tweet, dict):
+        return None
+    return _normalize_poll(tweet.get("poll", tweet.get("pollData")))
+
+
+def _merge_poll(current: dict | None, candidate: dict | None) -> dict | None:
+    """Choose one current-Tweet snapshot; never combine provider statistics."""
+    if current is None:
+        return candidate
+    if candidate is None:
+        return current
+
+    def quality(poll):
+        return (
+            len(poll.get("options", [])) >= 2,
+            _poll_complete({"poll": poll}),
+            poll.get("closed") is not None,
+            poll.get("total_votes") is not None,
+            poll.get("ends_at") is not None,
+        )
+
+    return candidate if quality(candidate) > quality(current) else current
+
+
+def _poll_text(poll: dict) -> str:
+    """Text/fallback uses original options and known fields, without extra LLM."""
+    options = poll.get("options") or []
+    if len(options) < 2:
+        return "投票内容暂不可用"
+    lines = ["投票："]
+    for option in options:
+        percentage = option.get("percentage")
+        suffix = f" — {percentage:.1f}%" if percentage is not None else ""
+        lines.append(f"• {option['label']}{suffix}")
+    details = []
+    if poll.get("total_votes") is not None:
+        details.append(f"{poll['total_votes']:,} 票")
+    ends_at = _parse_iso(poll.get("ends_at"))
+    closed = poll.get("closed")
+    if ends_at is not None and ends_at <= _utcnow():
+        closed = True
+    if closed is True:
+        details.append("已结束")
+    elif closed is False:
+        details.append("进行中")
+    if ends_at is not None:
+        details.append(
+            "截止 "
+            + ends_at.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M")
+            + " UTC+8"
+        )
+    if details:
+        lines.append(" · ".join(details))
+    return "\n".join(lines)
+
+
 def _poll_complete(quote: dict | None) -> bool:
     poll = quote.get("poll") if quote else None
     return bool(
@@ -1623,6 +1684,7 @@ def _content_from_provider_payload(payload: Any, source: str) -> TweetContent | 
     # 标签降级为「原文摘录」。
     content = TweetContent(text, source, completeness)
     content.quote = _quote_from_tweet(tweet)
+    content.poll = _poll_from_tweet(tweet)
     return content
 
 
@@ -2341,6 +2403,7 @@ class CodexResetWatcher(MaiBotPlugin):
                 content.text if content else None,
                 content.completeness if content else None,
                 translation,
+                poll=content.poll if content else None,
             )
             card = await self._notice_card(
                 "Tibo 动态",
@@ -2847,6 +2910,7 @@ class CodexResetWatcher(MaiBotPlugin):
                 content.text if content is not None else None,
                 content.completeness if content is not None else None,
                 translation,
+                poll=content.poll if content else None,
             )
             card_content = content
             card_translation = translation
@@ -3191,9 +3255,11 @@ class CodexResetWatcher(MaiBotPlugin):
         """
         best: TweetContent | None = None
         quote: dict | None = None
+        poll: dict | None = None
         if isinstance(feed, TweetCandidate):
             hint = feed.hint or {}
             feed_quote = _quote_from_tweet(hint)
+            feed_poll = _poll_from_tweet(hint) if feed.tweet_id == tweet_id else None
         else:
             # Preserve the old lanes' text fallback and stale quote guard.
             hint = (
@@ -3210,6 +3276,7 @@ class CodexResetWatcher(MaiBotPlugin):
                 else {}
             )
             feed_quote = self._feed_quote(tweet_id, feed)
+            feed_poll = _poll_from_tweet(_feed_item(feed, "tweets", tweet_id))
         seek_quote = self.config.watcher.display_mode == "image"
         if tweet_id:
             providers = (
@@ -3229,6 +3296,15 @@ class CodexResetWatcher(MaiBotPlugin):
                     else payload
                 )
                 quote = _merge_quote(quote, _quote_from_tweet(provider_tweet))
+                # Only metadata explicitly bound to this Tweet may supply a poll.
+                if (
+                    isinstance(provider_tweet, dict)
+                    and str(
+                        provider_tweet.get("id", provider_tweet.get("tweetID")) or ""
+                    )
+                    == tweet_id
+                ):
+                    poll = _merge_poll(poll, _poll_from_tweet(provider_tweet))
                 content = _content_from_provider_payload(payload, name)
                 if content is None:
                     logger.info(
@@ -3247,13 +3323,21 @@ class CodexResetWatcher(MaiBotPlugin):
                         elapsed,
                     )
                     merged_quote = _merge_quote(quote, feed_quote)
+                    merged_poll = _merge_poll(poll, feed_poll)
                     poll_pending = bool(
                         merged_quote
                         and not _poll_complete(merged_quote)
                         and (quote is not None or feed_quote.get("poll") is not None)
                     )
-                    if not seek_quote or (merged_quote and not poll_pending):
+                    primary_poll_pending = (
+                        merged_poll is not None
+                        and not _poll_complete({"poll": merged_poll})
+                    )
+                    if not seek_quote or (
+                        merged_quote and not poll_pending and not primary_poll_pending
+                    ):
                         best.quote = merged_quote
+                        best.poll = merged_poll
                         return best
                 else:
                     logger.info(
@@ -3287,6 +3371,7 @@ class CodexResetWatcher(MaiBotPlugin):
             )
         else:
             best.quote = _merge_quote(quote, feed_quote)
+            best.poll = _merge_poll(poll, feed_poll)
             logger.info(
                 "Tweet 全文：采用 provider=%s completeness=%s len=%d",
                 best.source,
@@ -3487,6 +3572,7 @@ class CodexResetWatcher(MaiBotPlugin):
                 content.text if content else None,
                 content.completeness if content else None,
                 translation,
+                poll=content.poll if content else None,
             )
         lines = [title]
         if translation:
@@ -3856,6 +3942,9 @@ class CodexResetWatcher(MaiBotPlugin):
     ) -> NoticeCard | None:
         if self.config.watcher.display_mode != "image":
             return None
+        poll = content.poll if content is not None and tweet else None
+        if poll is not None:
+            poll = await self._translate_poll_options(poll, content.source)
         quote = content.quote if content is not None and tweet else None
         if quote and isinstance(quote.get("poll"), dict):
             quote = dict(quote)
@@ -3883,6 +3972,7 @@ class CodexResetWatcher(MaiBotPlugin):
             tweet=tweet,
             quote=quote,
             quote_translation=quote_translation,
+            poll=poll,
         )
 
     async def _send_group_notice(

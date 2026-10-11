@@ -15,9 +15,19 @@ pytest.importorskip("playwright.async_api")
 
 
 @pytest.mark.parametrize(
-    "kind", ["tweet", "quote", "system", "long", "poll", "active-poll"]
+    "kind",
+    [
+        "tweet",
+        "quote",
+        "system",
+        "long",
+        "poll",
+        "active-poll",
+        "primary-poll",
+        "primary-poll-rare",
+    ],
 )
-def test_real_local_screenshot_and_layout(tmp_path, kind):
+def test_real_local_screenshot_and_layout(tmp_path, monkeypatch, kind):
     from playwright.async_api import async_playwright
     from types import SimpleNamespace
 
@@ -56,6 +66,25 @@ def test_real_local_screenshot_and_layout(tmp_path, kind):
             card.quote["poll"].update(
                 closed=False, ends_at=(now + timedelta(hours=3)).isoformat()
             )
+
+    if kind in {"primary-poll", "primary-poll-rare"}:
+        import plugin as module
+        from test_primary_poll import NOW, payload
+
+        now = NOW
+        monkeypatch.setattr(module, "_utcnow", lambda: now)
+        raw = payload()["tweet"]
+        card = NoticeCard(
+            "Tibo 动态",
+            raw["text"],
+            "Pro 用户们，你们更希望拥有",
+            tweet=True,
+            url=raw["url"],
+            published_at=datetime.fromtimestamp(raw["created_timestamp"], timezone.utc),
+            poll=module._normalize_poll(raw["poll"]),
+        )
+        if kind == "primary-poll-rare":
+            card.poll["options"][0]["translation"] = "龘：五小时限额，每周用量翻倍"
 
     async def scenario():
         async with async_playwright() as p:
@@ -97,7 +126,11 @@ def test_real_local_screenshot_and_layout(tmp_path, kind):
                 expected_time = (
                     "2026-10-07 05:07"
                     if kind in {"poll", "active-poll"}
-                    else "2026-10-05 04:33"
+                    else (
+                        "2026-10-11 13:22"
+                        if kind in {"primary-poll", "primary-poll-rare"}
+                        else "2026-10-05 04:33"
+                    )
                 )
                 assert await page.locator("time").inner_text() == expected_time
                 if kind in {"poll", "active-poll"}:
@@ -150,6 +183,29 @@ def test_real_local_screenshot_and_layout(tmp_path, kind):
                     selectors.extend([".quote-title .zh", ".quote-title .en"])
                 elif card.quote:
                     selectors.extend([".quote .body.zh", ".quote .body.en"])
+                if kind in {"primary-poll", "primary-poll-rare"}:
+                    assert await page.locator(".primary .poll-option").count() == 3
+                    assert await page.locator(".quote").count() == 0
+                    assert "60,812 票" in visible and "进行中" in visible
+                    assert "截止 2026-10-12 01:22 UTC+8" in visible
+                    assert "✓" not in visible
+                    for i, option in enumerate(card.poll["options"]):
+                        assert option["label"] in visible
+                        assert (
+                            await page.locator(".poll-percentage").nth(i).inner_text()
+                            == f"{option['percentage']:.1f}%"
+                        )
+                        track = await page.locator(".poll-track").nth(i).bounding_box()
+                        bar = await page.locator(".poll-bar").nth(i).bounding_box()
+                        assert (
+                            abs(
+                                bar["width"] / track["width"] * 100
+                                - option["percentage"]
+                            )
+                            < 0.1
+                        )
+                    if kind == "primary-poll-rare":
+                        selectors.append('.primary .poll-label [lang="zh"]')
                 for selector in selectors:
                     node = await session.send(
                         "DOM.querySelector", {"nodeId": root, "selector": selector}

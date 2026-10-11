@@ -82,6 +82,17 @@ def test_supplements_are_selected_for_every_displayed_content_field():
             "Tibo 动态",
             "Hello",
             tweet=True,
+            poll={
+                "options": [
+                    {"label": "龘", "percentage": 50},
+                    {"label": "Hi", "translation": "龘", "percentage": 50},
+                ]
+            },
+        ),
+        NoticeCard(
+            "Tibo 动态",
+            "Hello",
+            tweet=True,
             quote={
                 "poll": {
                     "options": [

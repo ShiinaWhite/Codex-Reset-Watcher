@@ -1,0 +1,83 @@
+{
+  "code": 200,
+  "message": "OK",
+  "tweet": {
+    "url": "https://x.com/thsottiaux/status/2109152716954222849",
+    "id": "2109152716954222849",
+    "text": "Pro users, would you rather have",
+    "raw_text": {
+      "text": "Pro users, would you rather have",
+      "display_text_range": [
+        0,
+        32
+      ],
+      "facets": []
+    },
+    "author": {
+      "screen_name": "thsottiaux",
+      "url": "https://x.com/thsottiaux",
+      "id": "1953337039510003712",
+      "followers": 836142,
+      "following": 75,
+      "likes": 10423,
+      "media_count": 150,
+      "name": "Tibo",
+      "description": "Codex & ChatGPT @OpenAI",
+      "raw_description": {
+        "text": "Codex & ChatGPT @OpenAI",
+        "facets": []
+      },
+      "location": "",
+      "banner_url": "",
+      "avatar_url": "https://pbs.twimg.com/profile_images/2093807917833281537/2yBgpwVV_200x200.jpg",
+      "joined": "Thu Aug 07 06:07:07 +0000 2025",
+      "protected": false,
+      "website": null,
+      "verification": {
+        "verified": true,
+        "verified_at": null,
+        "type": "individual"
+      },
+      "avatar_color": null
+    },
+    "replies": 1583,
+    "retweets": 100,
+    "likes": 1199,
+    "bookmarks": 134,
+    "quotes": 260,
+    "created_at": "Sun Oct 11 05:22:48 +0000 2026",
+    "created_timestamp": 1791696168,
+    "views": 272118,
+    "is_note_tweet": false,
+    "community_note": null,
+    "lang": "en",
+    "replying_to": null,
+    "replying_to_status": null,
+    "poll": {
+      "ends_at": "2026-10-11T17:22:47Z",
+      "time_left_en": "10 hours",
+      "total_votes": 60812,
+      "choices": [
+        {
+          "label": "5h limits, 2X week usage",
+          "count": 20564,
+          "percentage": 33.8
+        },
+        {
+          "label": "no 5h limits, same usage",
+          "count": 22707,
+          "percentage": 37.3
+        },
+        {
+          "label": "show result",
+          "count": 17541,
+          "percentage": 28.8
+        }
+      ]
+    },
+    "twitter_card": "tweet",
+    "color": null,
+    "provider": "twitter",
+    "reposted_by": null
+  }
+}

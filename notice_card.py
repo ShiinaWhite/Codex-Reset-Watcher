@@ -32,6 +32,7 @@ class NoticeCard:
     # One render per pipeline shared by groups; sending failures remain per-group.
     render_attempted: bool = False
     image_base64: str | None = None
+    poll: dict | None = None
 
 
 def _body(text: str, translation: str) -> str:
@@ -62,10 +63,10 @@ def _card_font_css(card: NoticeCard) -> str:
     author = quote.get("author") or {}
     if isinstance(author, dict):
         text.extend(str(author.get(k) or "") for k in ("name", "screen_name", "handle"))
-    poll = quote.get("poll") or {}
-    if isinstance(poll, dict):
-        for option in poll.get("options") or []:
-            text.extend(str(option.get(k) or "") for k in ("label", "translation"))
+    for poll in (card.poll if card.tweet else None, quote.get("poll")):
+        if isinstance(poll, dict):
+            for option in poll.get("options") or []:
+                text.extend(str(option.get(k) or "") for k in ("label", "translation"))
     needed = set("".join(text))
     assets = TEMPLATES / "assets"
     index = json.loads((assets / "font-index.json").read_text(encoding="utf-8"))
@@ -270,7 +271,12 @@ def build_card_html(card: NoticeCard, now: datetime) -> str:
             ).decode(),
         ),
         title=escape(card.title),
-        body=_body(card.text, card.translation),
+        body=_body(card.text, card.translation)
+        + (
+            _poll_html(card.poll, now)
+            if card.tweet and isinstance(card.poll, dict)
+            else ""
+        ),
         quote=quote_html,
         layout="with-quote" if quote_html else "",
         avatar=_avatar() if card.tweet else "",
