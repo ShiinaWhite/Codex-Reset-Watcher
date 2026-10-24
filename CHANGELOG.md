@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 — candidate
+## 0.2.0 — 2026-10-24
 
 ### 通知功能
 
@@ -24,7 +24,7 @@
 - 扩展 release verifier 的卫生、tree/font/runtime 大小与 HTML payload 门禁。
 
 `config_version=1.3.0`、state schema 和所有成功后 receipt/逐群 dedup/retry 规则不变。
-此候选未 merge main，未建立 tag、GitHub Release 或 Marketplace 发布。
+升级到 0.2.0 不会清空已有 receipt/state；Host `1.2.2–1.3.5`、SDK `2.8.0–2.10.0` 均可运行。
 
 ## 0.1.13
 
